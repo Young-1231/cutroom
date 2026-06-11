@@ -77,3 +77,27 @@ def test_render_from_saved_edl(tmp_path, monkeypatch, synthetic_video, seeded_ws
 
     res = runner.invoke(app, ["render", "missing-video"])
     assert res.exit_code == 1
+
+
+def test_log_bad_source_is_friendly(tmp_path, monkeypatch):
+    """A missing local file must produce a one-line error, not a traceback."""
+    monkeypatch.setenv("CUTROOM_HOME", str(tmp_path))
+    res = runner.invoke(app, ["log", str(tmp_path / "does-not-exist.mp4")])
+    assert res.exit_code == 1
+    assert res.exception is None or isinstance(res.exception, SystemExit)
+    assert "Error" in res.output or "error" in res.output
+
+
+def test_render_missing_edl_is_friendly(tmp_path, monkeypatch, seeded_ws):
+    monkeypatch.setenv("CUTROOM_HOME", str(seeded_ws.home))
+    res = runner.invoke(app, ["render", "testvid000001"])
+    assert res.exit_code == 1
+    assert "no saved EDL" in res.output
+
+
+def test_render_corrupt_edl_is_friendly(tmp_path, monkeypatch, seeded_ws):
+    monkeypatch.setenv("CUTROOM_HOME", str(seeded_ws.home))
+    (seeded_ws.renders_dir("testvid000001") / "edl.json").write_text("{not json")
+    res = runner.invoke(app, ["render", "testvid000001"])
+    assert res.exit_code == 1
+    assert "not a valid EDL" in res.output

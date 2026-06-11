@@ -47,29 +47,39 @@ def validate_edl(edl: EDL, duration: float, require_evidence: bool = True) -> li
     return errors
 
 
-def snap_edl(edl: EDL, segments: list[Segment]) -> EDL:
+def snap_edl(edl: EDL, segments: list[Segment], duration: float | None = None) -> EDL:
     """Snap cut edges off mid-word, pad outward, and keep cuts non-overlapping.
 
-    Edges that land strictly inside a word move to the word's nearest boundary
-    when that boundary is within SNAP_WINDOW. Every edge then gets EDGE_PAD of
-    breathing room, clamped to [0, last known content end]. Overlaps created by
-    padding are resolved at the midpoint of the conflicting edges.
+    Edges that land strictly inside a word move to the word's nearest boundary when
+    that boundary is within SNAP_WINDOW. Every edge then gets EDGE_PAD of breathing
+    room, clamped to [0, duration]. `duration` is the true media length when known
+    (pass it — otherwise the last content timestamp is used, which can overrun EOF if
+    an ASR segment's end exceeds the media). Cuts are sorted first; overlaps from
+    padding are resolved at the midpoint; any cut that snapping degenerates to
+    non-positive length is dropped. The result is not guaranteed to satisfy
+    validate_edl (e.g. snapping can shrink a minimum-length cut) — callers should
+    re-validate before rendering.
     """
     if not edl.cuts:
         return EDL(video_id=edl.video_id, cuts=[], target=edl.target, captions=edl.captions)
     words = sorted((w for s in segments for w in s.words), key=lambda w: w.t0)
-    ends = [s.t1 for s in segments] + [c.t1 for c in edl.cuts]
-    upper = max(ends)  # best available stand-in for the video duration
-    new_cuts = []
-    for c in edl.cuts:
+    if duration is not None:
+        upper = duration
+    else:
+        upper = max([s.t1 for s in segments] + [c.t1 for c in edl.cuts])
+    ordered = sorted(edl.cuts, key=lambda c: c.t0)
+    snapped = []
+    for c in ordered:
         t0 = max(0.0, _snap_edge(c.t0, words) - EDGE_PAD)
         t1 = min(upper, _snap_edge(c.t1, words) + EDGE_PAD)
-        new_cuts.append(Cut(t0=t0, t1=t1, label=c.label, evidence=c.evidence))
-    for prev, cur in zip(new_cuts, new_cuts[1:], strict=False):
+        snapped.append(Cut(t0=t0, t1=t1, label=c.label, evidence=c.evidence))
+    for prev, cur in zip(snapped, snapped[1:], strict=False):
         if cur.t0 < prev.t1:
             mid = (prev.t1 + cur.t0) / 2.0
-            prev.t1 = mid
-            cur.t0 = mid
+            # Clamp so neither side inverts even when the cuts heavily overlap.
+            prev.t1 = max(prev.t0, mid)
+            cur.t0 = min(cur.t1, mid)
+    new_cuts = [c for c in snapped if c.t1 - c.t0 > 1e-3]
     return EDL(video_id=edl.video_id, cuts=new_cuts, target=edl.target, captions=edl.captions)
 
 

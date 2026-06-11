@@ -134,3 +134,32 @@ def test_snap_clamps_to_content_bounds(seeded_ws):
     out = snap_edl(edl, segs)
     assert out.cuts[0].t0 >= 0.0
     assert out.cuts[0].t1 <= 118.0  # last known content end, never padded past it
+
+
+def test_snap_drops_degenerate_and_clamps_to_duration(seeded_ws):
+    from cutroom.types import Cut, Evidence
+    segs = seeded_ws.get_segments(VID)
+    # Two heavily overlapping cuts: midpoint resolution must not invert either, and a
+    # cut that collapses to non-positive length must be dropped, never emitted.
+    edl = EDL(video_id=VID, cuts=[
+        Cut(10.0, 40.0, "a", Evidence(segment_ids=[3], frame_ts=[20.0])),
+        Cut(12.0, 13.0, "b", Evidence(segment_ids=[3], frame_ts=[12.5])),
+    ])
+    out = snap_edl(edl, segs, duration=DUR)
+    for c in out.cuts:
+        assert c.t1 > c.t0
+        assert c.t1 <= DUR + 1e-6
+    # Sorted, non-overlapping.
+    for prev, cur in zip(out.cuts, out.cuts[1:], strict=False):
+        assert cur.t0 >= prev.t1 - 1e-9
+
+
+def test_snap_respects_real_duration_over_segment_overrun(seeded_ws):
+    from cutroom.types import Cut, Evidence, Word
+    # An ASR segment whose end overruns the media end must not let a cut pad past EOF.
+    segs = seeded_ws.get_segments(VID)
+    segs[-1].t1 = DUR + 0.5
+    segs[-1].words = [Word("end", DUR - 0.2, DUR + 0.5)]
+    edl = EDL(video_id=VID, cuts=[Cut(100.0, DUR, "x", Evidence([8], [110.0]))])
+    out = snap_edl(edl, segs, duration=DUR)
+    assert out.cuts[0].t1 <= DUR + 1e-6

@@ -86,8 +86,17 @@ def _fits(line: list[tuple[str, float, float]], word: tuple[str, float, float]) 
 
 
 def _clean(text: str) -> str:
-    # ASS treats {...} as override blocks and newlines as event separators.
-    return text.replace("{", "(").replace("}", ")").replace("\n", " ").strip()
+    # Backslash first: ASS interprets \N \n \h as line breaks / hard spaces, so a
+    # literal backslash in the transcript (e.g. "C:\New") must be neutralized before
+    # anything else. Then {...} override blocks and CR/LF event separators.
+    return (
+        text.replace("\\", "⧵")  # U+29F5 reverse solidus operator — visually a backslash
+        .replace("{", "(")
+        .replace("}", ")")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .strip()
+    )
 
 
 def _ass_time(t: float) -> str:

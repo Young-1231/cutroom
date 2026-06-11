@@ -6,11 +6,12 @@ thumbnails of the frames it actually viewed, and a link to the rendered file.
 
 from __future__ import annotations
 
-import subprocess
+import shutil
 from datetime import date
 from pathlib import Path
 
 from cutroom.db import Workspace
+from cutroom.ffmpeg_util import run_ffmpeg
 from cutroom.types import EDL, Cut, Moment
 
 
@@ -63,17 +64,27 @@ def _moment_reason(cut: Cut, moments: list[Moment] | None) -> str:
 
 
 def _extract_thumb(src: Path, ts: float, thumbs_dir: Path, cut_no: int) -> Path | None:
-    """320px-wide JPEG at ts; None when the source or the frame is unavailable."""
+    """320px-wide JPEG at ts; None when neither a saved frame nor the source is usable.
+
+    view_frames already wrote a 768px JPEG for every viewed timestamp, so reuse it
+    when present and only fall back to re-extracting from the source (e.g. the
+    `cutroom render` path, which never ran the agent)."""
+    out = thumbs_dir / f"cut{cut_no:02d}_{ts:08.2f}s.jpg"
+    # view_frames saves frames at media/<id>/frames/f<ts>.jpg, beside source.mp4.
+    cached = src.parent / "frames" / f"f{ts:09.3f}.jpg"
+    if cached.exists():
+        shutil.copyfile(cached, out)
+        return out
     if not src.exists():
         return None
-    out = thumbs_dir / f"cut{cut_no:02d}_{ts:08.2f}s.jpg"
-    proc = subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-         "-ss", f"{ts:.3f}", "-i", str(src),
-         "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "3", str(out)],
-        capture_output=True, check=False,
-    )
-    return out if proc.returncode == 0 and out.exists() else None
+    try:
+        run_ffmpeg([
+            "-ss", f"{ts:.3f}", "-i", str(src),
+            "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "3", str(out),
+        ])
+    except (RuntimeError, OSError):
+        return None
+    return out if out.exists() else None
 
 
 def _mmss(t: float) -> str:

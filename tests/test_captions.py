@@ -92,3 +92,11 @@ def test_write_ass_path(seeded_ws):
     assert path.name == "clip_03.ass"
     assert path.parent == seeded_ws.renders_dir("testvid000001")
     assert path.read_text() == "[Script Info]\n"
+
+
+def test_clean_neutralizes_backslash_and_newlines():
+    from cutroom.render.captions import _clean
+    out = _clean("path C:\\New folder\r\nand {tag}")
+    assert "\\" not in out  # no raw backslash that ASS would read as \N/\n/\h
+    assert "\n" not in out and "\r" not in out
+    assert "{" not in out and "}" not in out

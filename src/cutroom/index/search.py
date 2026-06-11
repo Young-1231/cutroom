@@ -29,7 +29,13 @@ def search_transcript(
 
 
 def read_span(ws: Workspace, video_id: str, t0: float, t1: float, max_chars: int = 2000) -> str:
-    """Word-timestamped transcript intersecting [t0, t1], truncated to max_chars."""
+    """Word-timestamped transcript intersecting [t0, t1], emitting only whole segments
+    that fit within max_chars.
+
+    The resume point is the start of the first segment that did NOT fully fit, so the
+    next call re-includes it in full (get_segments filters with `t1 > t0`, so resuming
+    at a segment's t1 would silently drop it). When not even the first segment fits, we
+    say so instead of advertising a resume point that would loop forever."""
     if t1 <= t0:
         return f"empty span ({t0:.1f}–{t1:.1f})"
     segments = ws.get_segments(video_id, t0, t1)
@@ -38,29 +44,23 @@ def read_span(ws: Workspace, video_id: str, t0: float, t1: float, max_chars: int
 
     lines: list[str] = []
     used = 0
-    truncated = False
+    resume_at: float | None = None
     for seg in segments:
         line = f"(seg {seg.id}) [{seg.t0:.1f}–{seg.t1:.1f}] {seg.text.strip()}"
-        if used + len(line) > max_chars:
-            # Keep whole words up to the cap.
-            room = max(0, max_chars - used - 1)
-            cut = line[:room]
-            if " " in cut:
-                cut = cut[: cut.rfind(" ")]
-            if cut:
-                lines.append(cut + "…")
-            truncated = True
+        # Reserve room for the resume marker so it never overflows the cap.
+        marker = f"[truncated — read again from {fmt_ts(seg.t0)}]"
+        if used + len(line) > max_chars - len(marker) - 1:
+            resume_at = seg.t0
             break
         lines.append(line)
         used += len(line) + 1
 
-    if not truncated:
+    if resume_at is None:
         return "\n".join(lines)
-    # The truncation marker must fit inside the cap too — drop content lines until it does.
-    while True:
-        last_t = segments[len(lines) - 1].t1 if lines else t0
-        marker = f"[truncated at {fmt_ts(last_t)} — call read_transcript again from there]"
-        out = "\n".join([*lines, marker])
-        if len(out) <= max_chars or not lines:
-            return out
-        lines.pop()
+    if not lines:
+        need = used + len(segments[0].text)
+        return (
+            f"budget too small to read even the first segment here"
+            f" (need ~{need} chars, have {max_chars}); free up budget or read a narrower span"
+        )
+    return "\n".join([*lines, f"[truncated — read again from {fmt_ts(resume_at)}]"])

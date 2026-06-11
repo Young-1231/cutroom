@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import re
 import statistics
-import subprocess
 
 from cutroom.db import Workspace
+from cutroom.ffmpeg_util import run_ffmpeg_analysis
 from cutroom.types import AudioEvent
 
 SILENCE_NOISE_DB = -35
@@ -36,13 +36,13 @@ def detect_audio_events(ws: Workspace, video_id: str) -> list[AudioEvent]:
         events += _loud_spans(wav, video_id)
     except Exception:  # noqa: BLE001 — best-effort by design, see module docstring
         pass
-    ws.add_audio_events(events)
+    ws.replace_audio_events(video_id, events)
     return events
 
 
 def _silences(wav: str, video_id: str, duration: float) -> list[AudioEvent]:
-    stderr = _ffmpeg_filter_log(
-        wav, f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_SECONDS}"
+    stderr = run_ffmpeg_analysis(
+        ["-i", wav, "-af", f"silencedetect=noise={SILENCE_NOISE_DB}dB:d={SILENCE_MIN_SECONDS}"]
     )
     events: list[AudioEvent] = []
     start: float | None = None
@@ -58,7 +58,7 @@ def _silences(wav: str, video_id: str, duration: float) -> list[AudioEvent]:
 
 
 def _loud_spans(wav: str, video_id: str) -> list[AudioEvent]:
-    stderr = _ffmpeg_filter_log(wav, "ebur128")
+    stderr = run_ffmpeg_analysis(["-i", wav, "-af", "ebur128"])
     samples = [(float(t), float(m)) for t, m in _EBUR_LINE.findall(stderr)]
     if not samples:
         return []
@@ -81,12 +81,3 @@ def _loud_spans(wav: str, video_id: str) -> list[AudioEvent]:
 def _loud_event(video_id: str, span: list[tuple[float, float]]) -> AudioEvent:
     return AudioEvent(None, video_id, "loud", span[0][0], span[-1][0],
                       value=max(m for _, m in span))
-
-
-def _ffmpeg_filter_log(wav: str, af: str) -> str:
-    proc = subprocess.run(
-        ["ffmpeg", "-nostdin", "-hide_banner", "-nostats", "-i", wav,
-         "-af", af, "-f", "null", "-"],
-        capture_output=True, text=True,
-    )
-    return proc.stderr

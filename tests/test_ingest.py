@@ -114,3 +114,17 @@ def test_log_footage_end_to_end(synthetic_video, ws: Workspace, whisper_tiny):
         assert len(ws.get_segments(meta.id)) >= 1
     assert steps[0] == "fetch"
     assert {"shots", "transcribe", "audio", "scenes"} <= set(steps)
+
+
+@pytest.mark.slow
+def test_ingest_is_idempotent(synthetic_video, ws: Workspace, whisper_tiny):
+    """Re-logging the same source must not duplicate shots/segments/audio_events."""
+    src = str(synthetic_video["path"])
+    meta = log_footage(src, ws, model_size="tiny")
+    counts = (len(ws.get_shots(meta.id)), len(ws.get_segments(meta.id)),
+              len(ws.get_audio_events(meta.id)))
+    meta2 = log_footage(src, ws, model_size="tiny")
+    assert meta2.id == meta.id
+    counts2 = (len(ws.get_shots(meta.id)), len(ws.get_segments(meta.id)),
+               len(ws.get_audio_events(meta.id)))
+    assert counts2 == counts, f"re-log changed row counts {counts} -> {counts2}"

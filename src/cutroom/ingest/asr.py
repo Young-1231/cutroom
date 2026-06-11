@@ -32,6 +32,7 @@ def transcribe(
         str(ws.audio_path(video_id)), word_timestamps=True, vad_filter=True
     )
 
+    ws.delete_segments(video_id)  # idempotent re-run: drop any prior transcription
     segments = []
     for s in raw:
         if on_progress is not None:

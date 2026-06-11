@@ -11,6 +11,20 @@
 
 ## 已完成
 
+- 多代理 code review 修复（2026-06-11）：修掉 15 条审查发现的高优问题，85 离线测试
+  （+18 回归）+ 真实 e2e 全绿，真实影片 ask/highlights 端到端复验通过。要点：
+  - **安全**：内层 agent 从 bypassPermissions 改为 default + 白名单 can_use_tool 门
+    + disallowed_tools，封堵恶意转写经间接注入触达 Bash/Write/WebFetch 的 RCE 链。
+  - **契约**：propose_edl 现强制 frame_ts 必须真的 view 过 + 非空 evidence（_basic_validate
+    同步），"每一刀有证据"不再可绕过。
+  - **健壮性**：ingest 幂等（replace_shots/segments/audio_events）；ffmpeg 统一走
+    cutroom.ffmpeg_util（返回码检查 + latin-1 解码 + 单一 resolve_ffmpeg）；shots 单切点
+    不再丢弃；read_span 续读点修正（不跳过半展示段）+ tiny-cap 不再死循环；snap_edl 收
+    真实 duration、防反转、丢退化 cut，CLI 侧重新校验；FTS 补 UPDATE 触发器；ASS 转义反斜杠/CR。
+  - **CLI**：友好错误边界（@friendly），agent 输出 markup=False（保留 [seg]/[mm:ss] 引用），
+    runner 暴露 ok/error（max_turns/API 错误不再伪装成正常结果），render 解析坏 json 不再 traceback。
+  - **清理**：删 3 个重复 mm:ss / 5 处 ffmpeg 封装合一 / receipts 复用已抽帧。
+
 - 发布（2026-06-11，用户授权）：private 仓库 https://github.com/Young-1231/cutroom，
   2 commits（M0 + CI 修复），CI ubuntu+macos 双绿。CI 修复：HF 对共享 runner 匿名
   下载限流 429 → whisper_tiny fixture 优雅 skip + actions/cache 缓存模型 + fail-fast 关闭。

@@ -13,13 +13,17 @@ import sqlite3
 import subprocess
 from typing import Any
 
+import anyio
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from cutroom.agent.budget import Ledger
 from cutroom.db import Workspace
 from cutroom.types import EDL, Evidence, Moment, Segment, edl_from_dict, edl_to_dict
 
-EXHAUSTED_MSG = "budget exhausted — finalize with mark_moment/propose_edl now"
+EXHAUSTED_MSG = (
+    "budget exhausted — stop investigating and finalize now:"
+    " propose_edl for an edit task, or write your text answer for ask/chapters"
+)
 MAX_FRAMES_PER_CALL = 6
 READ_SPAN_CAP = 2500
 FRAME_TS_TOLERANCE = 0.05  # seconds; how close a cited frame must be to a viewed one
@@ -110,8 +114,38 @@ def _render_segments(segs: list[Segment]) -> str:
     return "\n".join(f"[{_mmss(s.t0)}-{_mmss(s.t1)}] (seg {s.id}) {s.text}" for s in segs)
 
 
+class _BadArg(Exception):
+    """A tool argument the model sent in the wrong shape (e.g. '01:15' for a number)."""
+
+
+def _num(args: dict[str, Any], key: str) -> float:
+    try:
+        return float(args[key])
+    except (KeyError, TypeError, ValueError) as e:
+        raise _BadArg(f"{key} must be a number in seconds, got {args.get(key)!r}") from e
+
+
+def _num_list(args: dict[str, Any], key: str) -> list[float]:
+    try:
+        return [float(x) for x in args.get(key, [])]
+    except (TypeError, ValueError) as e:
+        raise _BadArg(f"{key} must be a list of numbers, got {args.get(key)!r}") from e
+
+
+def _int_list(args: dict[str, Any], key: str) -> list[int]:
+    try:
+        return [int(x) for x in args.get(key, [])]
+    except (TypeError, ValueError) as e:
+        raise _BadArg(f"{key} must be a list of integers, got {args.get(key)!r}") from e
+
+
 def _basic_validate(edl: EDL, duration: float) -> list[str]:
-    """Fallback EDL checks while cutroom.render.edl is not available."""
+    """Fallback EDL checks while cutroom.render.edl is not available.
+
+    Mirrors render.edl.validate_edl(require_evidence=True): every cut must cite at
+    least one segment id and one frame timestamp, so the fallback can never accept an
+    evidence-free EDL that the real validator would reject.
+    """
     errors: list[str] = []
     if not edl.cuts:
         errors.append("EDL must contain at least one cut")
@@ -130,8 +164,25 @@ def _basic_validate(edl: EDL, duration: float) -> list[str]:
             errors.append(f"{tag}: out of bounds 0-{duration:.1f}s")
         if prev_t1 is not None and c.t0 < prev_t1:
             errors.append(f"{tag}: overlaps or is out of order with the previous cut")
+        if not c.evidence.segment_ids:
+            errors.append(f"{tag}: no segment_ids cited (every cut needs transcript evidence)")
+        if not c.evidence.frame_ts:
+            errors.append(f"{tag}: no frame_ts cited (view frames inside the cut first)")
         prev_t1 = c.t1
     return errors
+
+
+def _unviewed_frames(edl: EDL, viewed: list[float]) -> list[str]:
+    """Cuts citing a frame timestamp that was never actually extracted via view_frames."""
+    problems: list[str] = []
+    for i, c in enumerate(edl.cuts):
+        for t in c.evidence.frame_ts:
+            if not any(abs(t - v) <= FRAME_TS_TOLERANCE for v in viewed):
+                problems.append(
+                    f"cut {i} [{c.t0:.2f}-{c.t1:.2f}]: frame {t:.2f}s was never viewed —"
+                    f" call view_frames([{t:.2f}]) before citing it"
+                )
+    return problems
 
 
 def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -> dict[str, Any]:
@@ -179,8 +230,14 @@ def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -
     async def search_transcript(args: dict[str, Any]) -> dict[str, Any]:
         if ledger.exhausted:
             return _text_only(EXHAUSTED_MSG)
-        query = str(args["query"])
-        limit = int(args.get("limit") or 8)
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return reply("search_transcript needs a non-empty query", is_error=True)
+        try:
+            limit = int(args["limit"]) if args.get("limit") is not None else 8
+        except (TypeError, ValueError):
+            return reply(f"limit must be an integer, got {args.get('limit')!r}", is_error=True)
+        limit = max(1, min(limit, 25))
         try:
             from cutroom.index.search import search_transcript as _search
         except ImportError:
@@ -207,7 +264,10 @@ def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -
     async def read_transcript(args: dict[str, Any]) -> dict[str, Any]:
         if ledger.exhausted:
             return _text_only(EXHAUSTED_MSG)
-        t0, t1 = float(args["t0"]), float(args["t1"])
+        try:
+            t0, t1 = _num(args, "t0"), _num(args, "t1")
+        except _BadArg as e:
+            return reply(str(e), is_error=True)
         max_chars = min(READ_SPAN_CAP, ledger.remaining)
         try:
             from cutroom.index.search import read_span
@@ -230,22 +290,33 @@ def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -
     async def view_frames(args: dict[str, Any]) -> dict[str, Any]:
         if ledger.exhausted:
             return _text_only(EXHAUSTED_MSG)
-        stamps = [float(t) for t in args.get("timestamps", [])][:MAX_FRAMES_PER_CALL]
+        try:
+            stamps = _num_list(args, "timestamps")[:MAX_FRAMES_PER_CALL]
+        except _BadArg as e:
+            return reply(str(e), is_error=True)
         if not stamps:
             return _text_only(f"view_frames needs at least one timestamp\n{ledger.line()}", True)
         src = ws.source_path(video_id)
         if not src.exists():
             return _text_only(f"source media missing: {src}\n{ledger.line()}", True)
+        from cutroom.render.ffmpeg import resolve_ffmpeg
+
+        binary = resolve_ffmpeg()[0]
         frames_dir = ws.frames_dir(video_id)
         lines: list[str] = []
         images: list[dict[str, Any]] = []
         for t in stamps:
+            # Charge per frame up front so a single call can't overspend the budget;
+            # stop once we can't afford the next frame rather than going negative.
+            if ledger.remaining < Ledger.FRAME_COST:
+                lines.append(f"[{_mmss(t)}] skipped — not enough budget for another frame")
+                continue
             out = frames_dir / f"f{t:09.3f}.jpg"
-            proc = subprocess.run(
-                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                 "-ss", f"{t:.3f}", "-i", str(src), "-frames:v", "1",
-                 "-vf", "scale=768:-2", "-q:v", "7", str(out)],
-                capture_output=True,
+            cmd = [binary, "-y", "-hide_banner", "-loglevel", "error",
+                   "-ss", f"{t:.3f}", "-i", str(src), "-frames:v", "1",
+                   "-vf", "scale=768:-2", "-q:v", "7", str(out)]
+            proc = await anyio.to_thread.run_sync(
+                lambda c=cmd: subprocess.run(c, capture_output=True)
             )
             if proc.returncode != 0 or not out.exists():
                 lines.append(f"[{_mmss(t)}] t={t:.2f}s — frame extraction failed")
@@ -272,7 +343,10 @@ def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -
     async def probe_audio(args: dict[str, Any]) -> dict[str, Any]:
         if ledger.exhausted:
             return _text_only(EXHAUSTED_MSG)
-        t0, t1 = float(args["t0"]), float(args["t1"])
+        try:
+            t0, t1 = _num(args, "t0"), _num(args, "t1")
+        except _BadArg as e:
+            return reply(str(e), is_error=True)
         span = max(t1 - t0, 1e-9)
         speech = sum(
             min(s.t1, t1) - max(s.t0, t0) for s in ws.get_segments(video_id, t0, t1)
@@ -295,14 +369,23 @@ def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -
         _MARK_ARGS,
     )
     async def mark_moment(args: dict[str, Any]) -> dict[str, Any]:
-        t0, t1 = float(args["t0"]), float(args["t1"])
-        reason = str(args["reason"])
-        segment_ids = [int(s) for s in args.get("segment_ids", [])]
-        frame_ts = [float(t) for t in args.get("frame_ts", [])]
-        score = float(args.get("score") or 0)
+        try:
+            t0, t1 = _num(args, "t0"), _num(args, "t1")
+            segment_ids = _int_list(args, "segment_ids")
+            frame_ts = _num_list(args, "frame_ts")
+            score = _num(args, "score") if args.get("score") is not None else 0.0
+        except _BadArg as e:
+            return reply(str(e), is_error=True)
+        reason = str(args.get("reason", "")).strip()
         problems: list[str] = []
         if t1 <= t0:
             problems.append(f"t1 ({t1:.2f}) must be greater than t0 ({t0:.2f})")
+        if not reason:
+            problems.append("reason is required")
+        if not segment_ids:
+            problems.append("segment_ids is empty — cite the transcript segments covered")
+        if not frame_ts:
+            problems.append("frame_ts is empty — view at least one frame inside the moment first")
         viewed = registry["viewed_frames"]
         for t in frame_ts:
             if not any(abs(t - v) <= FRAME_TS_TOLERANCE for v in viewed):
@@ -358,6 +441,11 @@ def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -
             errors = [str(e) for e in (validate_edl(edl, duration, require_evidence=True) or [])]
         except ImportError:
             errors = _basic_validate(edl, duration)
+        # validate_edl can only check that a cited frame lies inside its cut; it cannot
+        # know whether the frame was ever actually extracted. Enforce that here so the
+        # "every cut ships with receipts" contract cannot be bypassed with invented
+        # timestamps — this is the only gate that gates the final render.
+        errors += _unviewed_frames(edl, registry["viewed_frames"])
         if errors:
             return reply("EDL rejected — fix and retry:\n- " + "\n- ".join(errors), is_error=True)
         registry["edl"] = edl_to_dict(edl)

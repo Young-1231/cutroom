@@ -183,6 +183,7 @@ def test_propose_edl_basic_validation_bounds_length_empty(kit, monkeypatch):
 
 def test_propose_edl_accepts_valid_cuts(kit, monkeypatch):
     monkeypatch.setitem(sys.modules, "cutroom.render.edl", None)
+    kit["registry"]["viewed_frames"].extend([5.0, 20.0])  # frames must be actually viewed
     res = call(kit["handlers"]["propose_edl"],
                {"cuts": [cut(1.0, 13.0, [1], [5.0], "intro"),
                          cut(16.0, 28.0, [2], [20.0], "depth")],
@@ -195,6 +196,31 @@ def test_propose_edl_accepts_valid_cuts(kit, monkeypatch):
     assert [c["t0"] for c in edl["cuts"]] == [1.0, 16.0]
     assert edl["cuts"][0]["evidence"]["segment_ids"] == [1]
     assert edl["cuts"][1]["evidence"]["frame_ts"] == [20.0]
+
+
+def test_propose_edl_rejects_unviewed_or_evidenceless_cuts(kit, monkeypatch):
+    monkeypatch.setitem(sys.modules, "cutroom.render.edl", None)
+    # Frames cited but never viewed → rejected (the core receipts contract).
+    res = call(kit["handlers"]["propose_edl"],
+               {"cuts": [cut(1.0, 13.0, [1], [5.0], "intro")]})
+    assert res.get("is_error") is True
+    assert "never viewed" in text_of(res)
+    assert kit["registry"]["edl"] is None
+    # Empty evidence → rejected even though times are valid.
+    res = call(kit["handlers"]["propose_edl"],
+               {"cuts": [{"t0": 1.0, "t1": 13.0, "segment_ids": [], "frame_ts": []}]})
+    assert res.get("is_error") is True
+    assert "no segment_ids" in text_of(res) or "no frame_ts" in text_of(res)
+
+
+def test_tools_reject_non_numeric_args(kit):
+    # The model sometimes sends the displayed mm:ss string where a number is expected.
+    res = call(kit["handlers"]["read_transcript"], {"t0": "01:15", "t1": 30.0})
+    assert res.get("is_error") is True
+    assert "number" in text_of(res)
+    res = call(kit["handlers"]["mark_moment"],
+               {"t0": 0.0, "t1": 5.0, "reason": "r", "segment_ids": [1], "frame_ts": "nope"})
+    assert res.get("is_error") is True
 
 
 def test_exhausted_budget_flips_investigation_tools_to_finalize(kit):
@@ -238,3 +264,20 @@ def test_runner_module_shape():
     assert callable(run_editor) and callable(run_editor_sync)
     r = EditorResult(final_text="", edl=None, moments=[], chars_used=0, num_turns=0)
     assert r.edl is None and r.moments == []
+
+
+def test_permission_gate_denies_builtin_tools():
+    """The editor allowlist must reject Bash/Write/WebFetch (indirect-injection defense)."""
+    import asyncio
+
+    from cutroom.agent.runner import _make_permission_gate
+
+    gate = _make_permission_gate({"mcp__cutroom__get_video_map", "Read"})
+
+    async def check(name):
+        return await gate(name, {}, None)
+
+    assert asyncio.run(check("Read")).behavior == "allow"
+    assert asyncio.run(check("mcp__cutroom__view_frames")).behavior == "allow"
+    for danger in ("Bash", "Write", "WebFetch", "Edit", "Task"):
+        assert asyncio.run(check(danger)).behavior == "deny", danger

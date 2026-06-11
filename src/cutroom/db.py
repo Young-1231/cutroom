@@ -47,6 +47,10 @@ END;
 CREATE TRIGGER IF NOT EXISTS segments_ad AFTER DELETE ON segments BEGIN
     INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
 END;
+CREATE TRIGGER IF NOT EXISTS segments_au AFTER UPDATE ON segments BEGIN
+    INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
+END;
 CREATE TABLE IF NOT EXISTS shots(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
@@ -152,6 +156,10 @@ class Workspace:
         self.conn.commit()
         return ids
 
+    def delete_segments(self, video_id: str) -> None:
+        self.conn.execute("DELETE FROM segments WHERE video_id=?", (video_id,))
+        self.conn.commit()
+
     def add_shots(self, shots: list[Shot]) -> None:
         self.conn.executemany(
             "INSERT INTO shots(video_id, t0, t1) VALUES(?,?,?)",
@@ -159,12 +167,20 @@ class Workspace:
         )
         self.conn.commit()
 
+    def replace_shots(self, video_id: str, shots: list[Shot]) -> None:
+        self.conn.execute("DELETE FROM shots WHERE video_id=?", (video_id,))
+        self.add_shots(shots)
+
     def add_audio_events(self, events: list[AudioEvent]) -> None:
         self.conn.executemany(
             "INSERT INTO audio_events(video_id, kind, t0, t1, value) VALUES(?,?,?,?,?)",
             [(e.video_id, e.kind, e.t0, e.t1, e.value) for e in events],
         )
         self.conn.commit()
+
+    def replace_audio_events(self, video_id: str, events: list[AudioEvent]) -> None:
+        self.conn.execute("DELETE FROM audio_events WHERE video_id=?", (video_id,))
+        self.add_audio_events(events)
 
     def replace_scenes(self, video_id: str, scenes: list[Scene]) -> None:
         self.conn.execute("DELETE FROM scenes WHERE video_id=?", (video_id,))
