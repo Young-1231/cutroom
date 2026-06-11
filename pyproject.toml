@@ -1,0 +1,47 @@
+[project]
+name = "cutroom"
+version = "0.1.0"
+description = "A film-editor agent that logs your footage before it cuts. Local-first, GPU-free, every cut ships with receipts."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.2.96",
+    "faster-whisper>=1.2.1",
+    "rich>=15.0.0",
+    "static-ffmpeg>=3.0",
+    "typer>=0.26.7",
+]
+
+[project.scripts]
+cutroom = "cutroom.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cutroom"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: needs real media processing (ffmpeg/whisper), seconds-to-minutes",
+    "requires_claude: hits the Claude Agent SDK (needs Claude Code auth)",
+    "requires_say: needs the macOS `say` TTS binary",
+]
+timeout = 600
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
