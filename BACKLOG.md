@@ -7,11 +7,13 @@
 
 ## 下一步（按优先级）
 
-1. **发布准备**（需用户确认后才执行 push）：LICENSE 文件、GitHub repo 名核查、CI
-   （GitHub Actions：ruff + 离线测试）、首个 git commit。
-2. **M2 评测故事（剩余部分）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
+1. **M2 评测故事（剩余部分）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
 
 ## 已完成
+
+- 发布（2026-06-11，用户授权）：private 仓库 https://github.com/Young-1231/cutroom，
+  2 commits（M0 + CI 修复），CI ubuntu+macos 双绿。CI 修复：HF 对共享 runner 匿名
+  下载限流 429 → whisper_tiny fixture 优雅 skip + actions/cache 缓存模型 + fail-fast 关闭。
 
 - 预算消融实验（2026-06-11，全自动模式收官）：His Girl Friday（92min，转写 133k
   chars）3 问对照——cutroom 15.8-28k chars vs baseline 133.6k chars（4.8-8.5×），
