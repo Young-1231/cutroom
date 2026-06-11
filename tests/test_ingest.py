@@ -73,7 +73,7 @@ def test_detect_shots_boundaries(ingested):
 
 
 @pytest.mark.slow
-def test_transcribe_tiny(ingested, synthetic_video):
+def test_transcribe_tiny(ingested, synthetic_video, whisper_tiny):
     if not synthetic_video["has_speech"]:
         pytest.skip("fixture has no speech (no `say` on this machine)")
     ws, vid = ingested
@@ -102,7 +102,7 @@ def test_detect_audio_events_silences(ingested, synthetic_video):
 
 
 @pytest.mark.slow
-def test_log_footage_end_to_end(synthetic_video, ws: Workspace):
+def test_log_footage_end_to_end(synthetic_video, ws: Workspace, whisper_tiny):
     steps: list[str] = []
     # cutroom.index may not exist yet; log_footage must not raise either way.
     meta = log_footage(str(synthetic_video["path"]), ws,

@@ -34,7 +34,7 @@ def test_list_empty(tmp_path, monkeypatch):
 
 @pytest.mark.slow
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
-def test_log_then_map_and_list(tmp_path, monkeypatch, synthetic_video):
+def test_log_then_map_and_list(tmp_path, monkeypatch, synthetic_video, whisper_tiny):
     monkeypatch.setenv("CUTROOM_HOME", str(tmp_path))
     monkeypatch.setenv("CUTROOM_WHISPER_MODEL", "tiny")
     res = runner.invoke(app, ["log", str(synthetic_video["path"])])

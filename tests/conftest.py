@@ -30,6 +30,22 @@ BLOCKS = [
 BLOCK_SECONDS = 15.0
 
 
+@pytest.fixture(scope="session")
+def whisper_tiny() -> None:
+    """Ensure the tiny ASR model is present; skip when the Hub is unreachable.
+
+    Anonymous downloads from shared CI runners get 429-rate-limited by HuggingFace —
+    that is a network condition, not a cutroom bug, so dependent tests skip instead
+    of failing. Loading here also warms the cache for the test body.
+    """
+    try:
+        from faster_whisper import WhisperModel
+
+        WhisperModel("tiny", device="cpu", compute_type="int8")
+    except Exception as e:  # noqa: BLE001 — any load failure means "not available here"
+        pytest.skip(f"whisper tiny model unavailable: {e}")
+
+
 @pytest.fixture
 def seeded_ws(tmp_path: Path) -> Workspace:
     """Workspace with a fake 120s talk: 6 shots, 8 segments, 3 scenes, silences."""
