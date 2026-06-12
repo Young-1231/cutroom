@@ -1,0 +1,31 @@
+name: release
+
+# Manual-only: publishes the current ref to PyPI.
+# Auth, either of:
+#  - PyPI trusted publishing configured for this repo/workflow (preferred, no secret), or
+#  - a PYPI_API_TOKEN repository secret.
+on:
+  workflow_dispatch:
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # trusted publishing (OIDC)
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - run: uv run ruff check src tests
+      - run: uv run pytest -q -m "not requires_claude"
+      - run: uv build
+      - name: Publish to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -n "$UV_PUBLISH_TOKEN" ]; then uv publish
+          else uv publish --trusted-publishing always; fi
