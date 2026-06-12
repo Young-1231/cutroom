@@ -6,6 +6,9 @@ Local-first · GPU-free · every cut ships with receipts.
 ```
 cutroom log https://youtube.com/watch?v=...   # ingest + index ("log the footage")
 cutroom highlights <video> -n 3 --vertical    # agent finds & renders the best moments
+cutroom highlights <video> --fanout           # scout long video in parallel windows
+cutroom highlights <video> --plan             # review the edit plan before rendering
+cutroom recipe podcast-shorts <video>         # named expert workflows (see `cutroom recipes`)
 cutroom ask <video> "what did she say about pricing?"   # answers with [mm:ss] citations
 cutroom chapters <video>                      # YouTube-ready chapter markers
 cutroom cut <video> "make a 30s teaser focused on the demo failure"
@@ -132,6 +135,24 @@ The baseline's cost grows linearly with video length; cutroom's is capped by its
 ledger no matter how long the footage is. (Small-N and self-judged — illustrative, not a
 benchmark. Reproduce with `uv run python scripts/ablation.py <video> "<question>"`;
 raw outputs in `docs/ablation-*.json`. The AgenticVBench scorecard is roadmap M2.)
+
+## Working with the agent the way modern harnesses do
+
+cutroom borrows the patterns that define this generation of agent tools (Claude Code,
+Codex, OpenClaw):
+
+- **Plan mode (human-in-the-loop).** `--plan` makes the editor produce its cut plan —
+  each cut's time range, reason, and cited transcript — and stop. Editing is
+  irreversible and subjective, so you review (and tweak `edl.json`) before a single
+  frame renders, then apply with `cutroom render <video>`.
+- **Recipes (reusable expert workflows).** Named, shareable editing skills:
+  `cutroom recipe podcast-shorts <video>` packages "how an editor approaches a podcast"
+  behind one name. `cutroom recipes` lists the built-ins (podcast-shorts, talk-highlights,
+  teaser, quotes, tighten).
+- **Fan-out (parallel sub-agents).** `--fanout` splits a long video into windows and
+  runs one scout agent per window concurrently, then merges and globally ranks their
+  picks — faster and cheaper than one agent scanning an hour serially, and each kept
+  moment still carries its viewed-frame receipts.
 
 ## Design principles
 

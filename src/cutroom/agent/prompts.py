@@ -47,6 +47,23 @@ def task_chapters() -> str:
     )
 
 
+def task_scout_window(t0: float, t1: float, k: int, focus: str = "") -> str:
+    """Scout one time window for the best moments — used by the fan-out orchestrator.
+
+    The scout marks moments with scores but does NOT propose an EDL; the orchestrator
+    collects moments from every window, ranks them globally, and assembles the final cut.
+    """
+    extra = f" {focus}" if focus else ""
+    mm0, mm1 = f"{int(t0 // 60):02d}:{int(t0 % 60):02d}", f"{int(t1 // 60):02d}:{int(t1 % 60):02d}"
+    return (
+        f"You are scouting ONLY the window [{mm0}–{mm1}] ({t0:.1f}s–{t1:.1f}s) of this video"
+        f" for highlights. Ignore everything outside it. Find up to {k} strong, self-contained"
+        f" moments inside the window.{extra} Verify each with viewed frames, then mark_moment"
+        " every candidate with evidence and a score from 0.0 to 1.0 (1.0 = unmissable)."
+        " Do NOT propose an EDL — marking moments is your final action."
+    )
+
+
 def task_cut(instruction: str, vertical: bool) -> str:
     target = "vertical" if vertical else "landscape"
     return (

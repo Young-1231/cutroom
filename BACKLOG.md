@@ -11,6 +11,16 @@
 
 ## 已完成
 
+- harness 范式三连（2026-06-11，对标 Claude Code/OpenClaw 热点）：99 离线测试 + 真实
+  e2e 全绿，demo 影片三链路 live 验证通过。
+  - **Plan mode（人在环）**：highlights/cut/recipe 加 `--plan` → 出可读剪辑方案
+    （时间码+理由+引用）+ 存 edl.json + 停，用户编辑后 `cutroom render` 落地。
+  - **Recipes（可复用专家配方）**：`cutroom recipes` 列表 + `cutroom recipe <name> <video>`；
+    内置 podcast-shorts/talk-highlights/teaser/quotes/tighten；对标 Claude Code skills。
+  - **Subagent fan-out**：`highlights --fanout` 按场景分窗 → 每窗一个 scout agent 并发
+    （CapacityLimiter 限流）→ 标记带分数的 moment → 全局去重排序 → 合并成 EDL；
+    moment 已过 view-frame 校验，receipts 契约保持。real demo: 2 窗并发 → 合并 2 刀。
+
 - 多代理 code review 修复（2026-06-11）：修掉 15 条审查发现的高优问题，85 离线测试
   （+18 回归）+ 真实 e2e 全绿，真实影片 ask/highlights 端到端复验通过。要点：
   - **安全**：内层 agent 从 bypassPermissions 改为 default + 白名单 can_use_tool 门

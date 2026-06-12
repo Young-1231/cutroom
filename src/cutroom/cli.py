@@ -66,18 +66,47 @@ def _resolve(ws: Workspace, ref: str) -> VideoMeta:
 
 
 def _run_edit_task(
-    ref: str, task_prompt: str, budget: int, model: str | None, reel: bool = False
+    ref: str, task_prompt: str, budget: int, model: str | None,
+    reel: bool = False, plan_only: bool = False,
 ) -> None:
-    """Shared agent → snap → render → receipts flow for highlights/cut."""
+    """Single-agent edit: run the editor, then apply its result (plan or render)."""
     from cutroom.agent.runner import run_editor_sync
-    from cutroom.render.edl import snap_edl, validate_edl
-    from cutroom.render.ffmpeg import render_edl, render_reel
-    from cutroom.render.receipts import write_receipts
 
     ws = _ws()
     meta = _resolve(ws, ref)
     console.print(f"[dim]editing {meta.title or meta.id} — budget {budget:,} chars[/dim]")
     result = run_editor_sync(ws, meta.id, task_prompt, budget_chars=budget, model=model)
+    _apply_result(ws, meta, result, reel=reel, plan_only=plan_only)
+
+
+def _run_fanout_task(
+    ref: str, n: int, vertical: bool, budget: int, model: str | None, plan_only: bool = False,
+) -> None:
+    """Multi-agent highlights: scout windows in parallel, merge, then apply the result."""
+    from cutroom.agent.fanout import highlights_fanout_sync
+
+    ws = _ws()
+    meta = _resolve(ws, ref)
+    per_window = max(20_000, budget // 4)
+    console.print(
+        f"[dim]fan-out over {meta.title or meta.id} — {per_window:,} chars/window[/dim]"
+    )
+    result = highlights_fanout_sync(
+        ws, meta.id, n, vertical, budget_per_window=per_window, model=model,
+    )
+    _apply_result(ws, meta, result, reel=False, plan_only=plan_only)
+
+
+def _apply_result(ws, meta, result, reel: bool = False, plan_only: bool = False) -> None:
+    """Shared tail: snap → validate → save edl.json → (print plan | render → receipts).
+
+    With plan_only the plan is saved and printed but nothing is rendered — the human
+    edits the EDL and runs `cutroom render` to apply it.
+    """
+    from cutroom.render.edl import snap_edl, validate_edl
+    from cutroom.render.ffmpeg import render_edl, render_reel
+    from cutroom.render.receipts import write_receipts
+
     _say(result.final_text)
     if not result.ok:
         err.print(f"the editor stopped early ({result.error}) — nothing rendered")
@@ -94,6 +123,17 @@ def _run_edit_task(
                       + "; ".join(problems) + "[/yellow]")
     edl_path = ws.renders_dir(meta.id) / "edl.json"
     edl_path.write_text(json.dumps(edl_to_dict(edl), indent=2), encoding="utf-8")
+    if plan_only:
+        _print_plan(ws, meta, edl, result)
+        console.print(
+            f"\n[bold]plan saved[/bold] → {edl_path}"
+            f"\nedit the cuts there if you like, then render with:"
+            f"\n  [cyan]cutroom render {meta.id}[/cyan]"
+        )
+        console.print(
+            f"[dim]budget used: {result.chars_used:,} chars, {result.num_turns} turns[/dim]"
+        )
+        return
     outputs = render_edl(ws, edl)
     if reel and len(edl.cuts) > 1:
         outputs.append(render_reel(ws, edl))
@@ -103,6 +143,36 @@ def _run_edit_task(
         console.print(f"  {p}")
     console.print(f"  receipts: {receipts}")
     console.print(f"[dim]budget used: {result.chars_used:,} chars, {result.num_turns} turns[/dim]")
+
+
+def _print_plan(ws: Workspace, meta: VideoMeta, edl, result) -> None:
+    """Human-readable edit plan: each cut's time range, reason, and cited transcript."""
+    from cutroom.index.map import fmt_ts
+
+    total = sum(c.t1 - c.t0 for c in edl.cuts)
+    console.print(
+        f"\n[bold]Edit plan[/bold] — {len(edl.cuts)} cut(s), {fmt_ts(total)} total,"
+        f" target={edl.target}, captions={edl.captions}"
+    )
+    for i, cut in enumerate(edl.cuts, 1):
+        head = f"  {i}. [{fmt_ts(cut.t0)}–{fmt_ts(cut.t1)}]"
+        if cut.label:
+            head += f"  {cut.label}"
+        console.print(head)
+        why = cut.evidence.note or _moment_reason_for(cut, result.moments)
+        if why:
+            _say(f"     why: {why}")
+        segs = ws.get_segments_by_ids(cut.evidence.segment_ids)
+        if segs:
+            excerpt = " ".join(s.text.strip() for s in segs)
+            _say(f"     “{excerpt[:160]}{'…' if len(excerpt) > 160 else ''}”")
+
+
+def _moment_reason_for(cut, moments) -> str:
+    for m in moments or []:
+        if m.t0 < cut.t1 and m.t1 > cut.t0:
+            return m.reason
+    return ""
 
 
 @app.command()
@@ -201,13 +271,56 @@ def highlights(
     video: str,
     n: int = typer.Option(3, "-n", help="number of clips"),
     vertical: bool = typer.Option(True, "--vertical/--landscape"),
+    plan: bool = typer.Option(False, "--plan", help="review the plan before rendering"),
+    fanout: bool = typer.Option(
+        False, "--fanout", help="scout the video in parallel windows (better for long video)"
+    ),
     budget: int = typer.Option(120_000),
     model: str | None = typer.Option(None),
 ) -> None:
     """Find and render the n best moments as clips with burned captions."""
     from cutroom.agent.prompts import task_highlights
 
-    _run_edit_task(video, task_highlights(n, vertical), budget, model)
+    if fanout:
+        _run_fanout_task(video, n, vertical, budget, model, plan_only=plan)
+    else:
+        _run_edit_task(video, task_highlights(n, vertical), budget, model, plan_only=plan)
+
+
+@app.command("recipes")
+def list_recipes() -> None:
+    """Built-in editing recipes (named expert workflows)."""
+    from cutroom.recipes import RECIPES
+
+    table = Table("recipe", "format", "clips", "what it makes")
+    for r in RECIPES.values():
+        table.add_row(r.name, "9:16" if r.vertical else "16:9",
+                      str(r.n) if r.n else "reel", r.summary)
+    console.print(table)
+    console.print("\n[dim]run one with:[/dim]  cutroom recipe <name> <video> [--plan]")
+
+
+@app.command()
+@friendly
+def recipe(
+    name: str = typer.Argument(..., help="recipe name (see `cutroom recipes`)"),
+    video: str = typer.Argument(..., help="video id (or prefix) or source substring"),
+    n: int | None = typer.Option(None, "-n", help="override the number of clips"),
+    plan: bool = typer.Option(False, "--plan", help="review the plan before rendering"),
+    budget: int | None = typer.Option(None, help="override the recipe's char budget"),
+    model: str | None = typer.Option(None),
+) -> None:
+    """Run a named editing recipe (e.g. `cutroom recipe podcast-shorts <video>`)."""
+    from cutroom.recipes import get_recipe, recipe_names
+
+    rec = get_recipe(name)
+    if rec is None:
+        err.print(f"unknown recipe {name!r} — available: {', '.join(recipe_names())}")
+        raise typer.Exit(1)
+    _run_edit_task(
+        video, rec.task_prompt(n_override=n), budget or rec.budget, model,
+        reel=rec.reel, plan_only=plan,
+    )
 
 
 @app.command()
@@ -259,13 +372,14 @@ def cut(
     video: str,
     instruction: str = typer.Argument(..., help='e.g. "30s teaser focused on the demo"'),
     vertical: bool = typer.Option(False, "--vertical/--landscape"),
+    plan: bool = typer.Option(False, "--plan", help="review the plan before rendering"),
     budget: int = typer.Option(120_000),
     model: str | None = typer.Option(None),
 ) -> None:
     """Free-form edit instruction → EDL → rendered clips (+ one concatenated reel)."""
     from cutroom.agent.prompts import task_cut
 
-    _run_edit_task(video, task_cut(instruction, vertical), budget, model, reel=True)
+    _run_edit_task(video, task_cut(instruction, vertical), budget, model, reel=True, plan_only=plan)
 
 
 def _summarize_scenes(ws: Workspace, video_id: str) -> None:

@@ -101,3 +101,29 @@ def test_render_corrupt_edl_is_friendly(tmp_path, monkeypatch, seeded_ws):
     res = runner.invoke(app, ["render", "testvid000001"])
     assert res.exit_code == 1
     assert "not a valid EDL" in res.output
+
+
+def test_highlights_plan_mode_saves_without_rendering(monkeypatch, seeded_ws):
+    """--plan prints the plan and writes edl.json but renders nothing."""
+    monkeypatch.setenv("CUTROOM_HOME", str(seeded_ws.home))
+    from cutroom.agent import runner
+    from cutroom.types import EDL, Cut, Evidence, Moment
+
+    vid = "testvid000001"
+    fake = runner.EditorResult(
+        final_text="found one strong moment",
+        edl=EDL(video_id=vid,
+                cuts=[Cut(16.0, 28.0, "deep dive", Evidence([2], [20.0]))],
+                target="landscape", captions=True),
+        moments=[Moment(16.0, 28.0, "vivid depth explanation", Evidence([2], [20.0]))],
+        chars_used=1234, num_turns=5, ok=True, error=None,
+    )
+    monkeypatch.setattr(runner, "run_editor_sync", lambda *a, **k: fake)
+
+    out = CliRunner().invoke(app, ["highlights", vid, "--plan", "-n", "1"])
+    assert out.exit_code == 0, out.output
+    assert "Edit plan" in out.output
+    assert "vivid depth explanation" in out.output  # the cited reason
+    assert "plan saved" in out.output and "cutroom render" in out.output
+    assert (seeded_ws.renders_dir(vid) / "edl.json").exists()
+    assert not list(seeded_ws.renders_dir(vid).glob("clip_*.mp4"))  # nothing rendered
