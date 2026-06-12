@@ -20,9 +20,12 @@ from claude_agent_sdk import (
 )
 
 from cutroom.agent.budget import Ledger
+from cutroom.agent.hooks import DENIED_BUILTINS, make_lifecycle_hooks
 from cutroom.agent.prompts import EDITOR_SYSTEM
 from cutroom.agent.tools import make_toolkit
+from cutroom.checkpoints import save_checkpoint
 from cutroom.db import Workspace
+from cutroom.sessions import load_state, record_session, save_state
 from cutroom.types import EDL, Moment, edl_from_dict
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -31,13 +34,9 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 # image-capable Read for saved frames. Built-in Bash/Write/WebFetch/etc. are never
 # allowed: the transcript it reads is attacker-controllable (ASR of an arbitrary
 # video), so an allowlist is the boundary against indirect prompt injection.
+# DENIED_BUILTINS (hooks.py) strips the dangerous built-ins from the model's context
+# AND denies them at the PreToolUse gate — three layers with the allowlist below.
 _READ_ONLY_BUILTIN = "Read"
-# Defense in depth: also name the dangerous built-ins explicitly so they are stripped
-# from the model's context, not merely denied at call time.
-_DISALLOWED_BUILTINS = [
-    "Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
-    "Task", "Agent", "KillShell", "BashOutput",
-]
 
 
 def _system_prompt(output_language: str | None) -> str:
@@ -70,6 +69,7 @@ class EditorResult:
     num_turns: int
     ok: bool = True
     error: str | None = None  # set when the session ended abnormally (max_turns, API error)
+    session_id: str = ""  # resume/fork handle (`cutroom sessions`)
 
 
 async def run_editor(
@@ -80,30 +80,55 @@ async def run_editor(
     model: str | None = None,
     max_turns: int = 40,
     output_language: str | None = None,
+    resume: str | None = None,
+    fork: bool = False,
+    role: str = "editor",
 ) -> EditorResult:
     ledger = Ledger(total_chars=budget_chars)
     registry: dict = {}
-    kit = make_toolkit(ws, video_id, ledger, registry)
+    if resume:
+        # Rehydrate earned evidence: the gate must keep honoring frames the agent
+        # actually viewed in the parent session, not force it to re-view everything.
+        registry["viewed_frames"] = load_state(ws, video_id, resume)
+    # Scouts mark moments; only the orchestrator assembles EDLs. Dropping the tool
+    # from the server makes that code-enforced, not prompt-trusted.
+    kit = make_toolkit(ws, video_id, ledger, registry,
+                       exclude=("propose_edl",) if role == "scout" else ())
     allowed = {*kit["tool_names"], _READ_ONLY_BUILTIN}
     options = ClaudeAgentOptions(
         model=model or os.environ.get("CUTROOM_MODEL") or DEFAULT_MODEL,
         system_prompt=_system_prompt(output_language),
         mcp_servers={"cutroom": kit["server"]},
         allowed_tools=list(allowed),
-        disallowed_tools=_DISALLOWED_BUILTINS,
+        disallowed_tools=DENIED_BUILTINS,
         # "default" (not bypassPermissions) so anything outside the allowlist reaches
         # the permission gate below and is denied instead of silently auto-approved.
         permission_mode="default",
         can_use_tool=_make_permission_gate(allowed),
+        # Lifecycle gates + audit trail: budget/evidence enforcement at the harness
+        # layer (handlers keep their own checks as defense in depth). Every accepted
+        # EDL is checkpointed (shadow-VCS) straight from the PostToolUse hook.
+        hooks=make_lifecycle_hooks(
+            ledger, registry, ws.renders_dir(video_id) / "trail.jsonl",
+            on_edl_accepted=lambda edl, session: save_checkpoint(
+                ws, video_id, edl, "agent", session
+            ),
+        ),
         max_turns=max_turns,
         # SDK isolation: never inherit the host user's settings or CLAUDE.md files —
         # without this the editor adopts whatever language/rules the host configured.
         setting_sources=[],
+        # Conversation JSONL is keyed by a cwd-derived project dir; pin cwd to the
+        # workspace home so session ids resolve no matter where cutroom was invoked.
+        cwd=str(ws.home),
+        resume=resume,
+        fork_session=fork,
     )
     final_text = ""
     num_turns = 0
     ok = True
     error: str | None = None
+    session_id = ""
     async with ClaudeSDKClient(options=options) as client:
         await client.query(task_prompt)
         async for msg in client.receive_response():
@@ -113,6 +138,7 @@ async def run_editor(
                     final_text = "\n".join(texts)
             elif isinstance(msg, ResultMessage):
                 num_turns = msg.num_turns
+                session_id = msg.session_id or ""
                 if msg.result:
                     final_text = msg.result
                 # A non-"success" subtype (error_max_turns, error_during_execution, …)
@@ -124,6 +150,13 @@ async def run_editor(
                     if getattr(msg, "api_error_status", None):
                         error += f" (api status {msg.api_error_status})"
     edl_dict = registry.get("edl")
+    if session_id:
+        save_state(ws, video_id, session_id, list(registry.get("viewed_frames", [])))
+        record_session(
+            ws, video_id, session_id=session_id, task=task_prompt,
+            turns=num_turns, spent=ledger.spent, ok=ok, edl=edl_dict is not None,
+            resumed_from=resume or "", forked=fork, role=role,
+        )
     return EditorResult(
         final_text=final_text,
         edl=edl_from_dict(edl_dict) if edl_dict else None,
@@ -132,6 +165,7 @@ async def run_editor(
         num_turns=num_turns,
         ok=ok,
         error=error,
+        session_id=session_id,
     )
 
 
@@ -143,6 +177,9 @@ def run_editor_sync(
     model: str | None = None,
     max_turns: int = 40,
     output_language: str | None = None,
+    resume: str | None = None,
+    fork: bool = False,
+    role: str = "editor",
 ) -> EditorResult:
     return anyio.run(
         partial(
@@ -154,5 +191,8 @@ def run_editor_sync(
             model=model,
             max_turns=max_turns,
             output_language=output_language,
+            resume=resume,
+            fork=fork,
+            role=role,
         )
     )

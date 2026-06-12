@@ -66,8 +66,9 @@ def test_highlights_fanout_merges_scout_results(monkeypatch, seeded_ws):
 
     calls = []
 
-    async def fake_run_editor(ws, vid, prompt, budget_chars=0, model=None):
+    async def fake_run_editor(ws, vid, prompt, budget_chars=0, model=None, role="editor"):
         calls.append(prompt)
+        assert role == "scout"  # scouts must run with the propose_edl-stripped toolkit
         if "00:00" in prompt:  # first window
             m = Moment(16.0, 28.0, "submarine depth", Evidence([2], [20.0]), score=0.6)
         else:  # second window
@@ -89,7 +90,7 @@ def test_highlights_fanout_merges_scout_results(monkeypatch, seeded_ws):
 def test_highlights_fanout_all_windows_fail(monkeypatch, seeded_ws):
     monkeypatch.setattr(fanout, "chunk_scenes", lambda *a, **k: [(0.0, 120.0)])
 
-    async def empty_scout(ws, vid, prompt, budget_chars=0, model=None):
+    async def empty_scout(ws, vid, prompt, budget_chars=0, model=None, role="editor"):
         return EditorResult("none", None, [], chars_used=10, num_turns=1, ok=False, error="x")
 
     monkeypatch.setattr(fanout, "run_editor", empty_scout)

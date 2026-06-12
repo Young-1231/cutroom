@@ -6,6 +6,12 @@ concurrently — each marking the best moments inside its window with a score �
 collect every moment, dedupe overlaps, rank globally, and assemble the final EDL from
 the top picks. Because each moment already passed mark_moment's viewed-frame check in
 its scout session, the assembled cuts keep the "every cut has receipts" guarantee.
+
+Isolation contract (code-enforced, not prompt-trusted): scouts run with role="scout",
+which strips propose_edl from their toolkit entirely — only this orchestrator can
+assemble an EDL. Each scout is its own session; the only parent→child channel is the
+task prompt string, and the only child→parent channel is the structured result
+(moments with evidence), never raw context.
 """
 
 from __future__ import annotations
@@ -86,7 +92,7 @@ async def highlights_fanout(
         async with limiter:
             results[i] = await run_editor(
                 ws, video_id, task_scout_window(w[0], w[1], per_window_k),
-                budget_chars=budget_per_window, model=model,
+                budget_chars=budget_per_window, model=model, role="scout",
             )
 
     async with anyio.create_task_group() as tg:

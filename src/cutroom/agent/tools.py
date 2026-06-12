@@ -185,8 +185,14 @@ def _unviewed_frames(edl: EDL, viewed: list[float]) -> list[str]:
     return problems
 
 
-def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -> dict[str, Any]:
+def make_toolkit(
+    ws: Workspace, video_id: str, ledger: Ledger, registry: dict,
+    exclude: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Build the cutroom MCP server bound to one video, one ledger, one evidence registry.
+
+    exclude drops tools from the server entirely — they never enter the agent's
+    context (read-only scout workers lose propose_edl this way, code-enforced).
 
     Returns {"server": McpSdkServerConfig, "tool_names": [full mcp names],
     "handlers": {short name: async handler}} — handlers are exposed for direct
@@ -457,6 +463,7 @@ def make_toolkit(ws: Workspace, video_id: str, ledger: Ledger, registry: dict) -
 
     tool_defs = [get_video_map, search_transcript, read_transcript, view_frames,
                  probe_audio, mark_moment, propose_edl]
+    tool_defs = [t for t in tool_defs if t.name not in exclude]
     server = create_sdk_mcp_server("cutroom", version="0.1.0", tools=tool_defs)
     return {
         "server": server,

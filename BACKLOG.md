@@ -7,9 +7,65 @@
 
 ## 下一步（按优先级）
 
-1. **M2 评测故事（剩余部分）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
+经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
+
+1. **Bundle**：recipes → Skills progressive disclosure（~1-2d）· seatbelt 文件 allowlist
+   sandbox（~3-5d）。（AGENTS.md 已落：symlink → CLAUDE.md，2026-06-12）
+2. **无标准机制、需自研**（调研未找到可抄的工业标准）：中途 steering/打断、verification/
+   self-critique 回合、observability/trace（trail.jsonl 已是雏形）。是真实缺口但要自己设计。
+3. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
+4. **Checkpoint 升级**（等 resume/fork 用例沉淀）：Cline 三粒度 restore（EDL / 会话 / 两者），
+   checkpoint 与 session 记录已互通 id，机制就绪。
 
 ## 已完成
+
+- 强化 fan-out scout 隔离（2026-06-12，范式吸收 #4）：117 离线测试（+2）+ 真实 fanout
+  e2e。scout 以 role="scout" 运行，make_toolkit `exclude` 把 propose_edl 从 MCP server
+  整体剥离（不进上下文，从 prompt 自律升级为代码强制）；只有编排器能组 EDL。session
+  索引带 role，`cutroom sessions` 标记 scout 行。真实验证：2 窗并发（26,308 chars/24 轮
+  汇总），trail 显示 scout 工具集无 propose_edl，4 候选合并 top-2 落 EDL，receipts 契约保持。
+
+- JSONL 会话持久化 + resume/fork（2026-06-12，范式吸收 #3）：115 离线测试（+7）+ 真实
+  e2e 三连验证。fork 杀手锏的量化证明：父会话调查 12,489 chars/13 轮 → `--fork` 重剪
+  ~10s teaser 只花 **1,500 chars/4 轮**（恰一次 view_frames），新 EDL 引用 [42.0, 46.0]
+  其中 42.0 直接复用父会话凭证（fork 中未重看，证据门凭重建状态放行）。
+  - **sessions.py**：sessions/index.jsonl（每 run 一条：task/spend/turns/lineage，同 id
+    resume 原位更新）+ sessions/<id>.json 证据状态（viewed_frames 跨 resume/fork 重建，
+    证据门继续认账，不强迫重看）。
+  - **runner**：`resume`/`fork` 参数 → SDK options.resume/fork_session；cwd 钉到
+    workspace home（会话 JSONL 按 cwd 派生目录存储，钉死后任意调用位置都能 resume）；
+    EditorResult 带 session_id。
+  - **CLI**：`cutroom sessions <video>`（lineage 列：resumed / fork of）；ask/cut 加
+    `--resume/--fork`（id 前缀解析、互斥校验）；每次运行尾行打印 session 句柄。
+  - 真实验证：resume 同 id 续会话且逐字记得首问（0 chars/1 轮）；fork 出新 id 带完整
+    父上下文；state 文件正确累积（父 6 帧 → fork 7 帧）。
+
+- Shadow-VCS checkpoint over EDL（2026-06-12，范式吸收 #2）：108 离线测试（+10）+ 真实
+  全闭环 e2e 验证（plan → 手改 → diff → restore → undo → render）。
+  - **checkpoints.py**：不依赖 git 的内容去重快照（HEAD 语义）+ cut 级语义 diff
+    （`~ cut 0 [68.46-87.82] -> [68.46-81.82]`，比行 diff 更贴 EDL）；restore 先把当前态
+    存为 pre-restore checkpoint（restore 本身可撤销），损坏的 edl.json 移到 .corrupt 不覆盖。
+  - **四个落点**：agent propose_edl 被接受（经 hooks `on_edl_accepted` 挂载点，checkpoint id
+    写回 trail）、plan 保存、render 前（人工编辑由此进历史）、restore 前。
+  - **CLI**：`cutroom checkpoints <video>`（列表 + `--diff <cp>` 对比当前）、
+    `cutroom restore <video> <cp>`。
+  - 真实验证：demo 影片 plan 模式 12 轮落 EDL → cp_0001(agent)+cp_0002(plan，吸附差异被
+    正确识别为新状态) → 手剪 3s 后 diff 输出精确两行 → restore 自动存 cp_0003(pre-restore)
+    → 从恢复态真实渲出 bert_01.mp4。Cline 式 task 粒度 restore 等 resume/fork 落地后升级。
+
+- Hooks/生命周期门（2026-06-12，范式吸收 #1）：98 离线测试（+11）+ 真实双 e2e 全绿。
+  - **agent/hooks.py**：`make_lifecycle_hooks(ledger, registry, trail_path)` 挂
+    PreToolUse/PostToolUse/PostToolUseFailure/Stop 四个 SDK hook 进 ClaudeAgentOptions。
+  - **PreToolUse 硬门**（只 deny 或沉默，allow 仍归 can_use_tool，参数报错仍归 handler）：
+    ① 副作用内置工具机械 deny（第三层）；② 预算耗尽时 deny 调查类工具、finalize 仍放行；
+    ③ 证据门——propose_edl/mark_moment 引用未真正 view 过的帧直接 deny。证据门控从
+    handler 自律升级为生命周期层结构性强制。
+  - **trail.jsonl 审计轨迹**（renders/ 下逐 JSON 行）：每次工具调用的逐调用计费/余额、
+    deny 事件、错误、Stop 会话摘要（breakdown）；`edl_accepted` 记录是 shadow-VCS
+    checkpoint 的挂载点。真实 ask 验证逐调用计费与 ledger 总额完全对账（4,123 chars）。
+  - **对抗性 e2e**：诱导 agent 不看帧直接 propose_edl → 真实 CLI 链路里 PreToolUse 门
+    deny，拒绝理由逐字回到模型，EDL 未注册，trail 记录 deny 事件。
+  - 顺手修：disallowed_tools 里的 MultiEdit 死规则（新 CLI 已并入 Edit，每次会话都警告）。
 
 - harness 范式三连（2026-06-11，对标 Claude Code/OpenClaw 热点）：99 离线测试 + 真实
   e2e 全绿，demo 影片三链路 live 验证通过。

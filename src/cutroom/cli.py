@@ -1,4 +1,5 @@
-"""cutroom CLI — log / list / map / ask / highlights / chapters / cut / render."""
+"""cutroom CLI — log / list / map / ask / highlights / chapters / cut / render
+/ sessions / checkpoints / restore."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from cutroom.checkpoints import save_checkpoint
 from cutroom.db import Workspace
 from cutroom.types import VideoMeta, edl_to_dict
 
@@ -65,17 +67,33 @@ def _resolve(ws: Workspace, ref: str) -> VideoMeta:
     return meta
 
 
+def _session_args(ws, video_id: str, resume: str | None, fork: str | None):
+    """Expand --resume/--fork id prefixes; returns (full_session_id, fork_flag)."""
+    if resume and fork:
+        err.print("--resume and --fork are mutually exclusive")
+        raise typer.Exit(1)
+    if not resume and not fork:
+        return None, False
+    from cutroom.sessions import resolve_session
+
+    return resolve_session(ws, video_id, resume or fork), bool(fork)
+
+
 def _run_edit_task(
     ref: str, task_prompt: str, budget: int, model: str | None,
     reel: bool = False, plan_only: bool = False,
+    resume: str | None = None, fork: str | None = None,
 ) -> None:
     """Single-agent edit: run the editor, then apply its result (plan or render)."""
     from cutroom.agent.runner import run_editor_sync
 
     ws = _ws()
     meta = _resolve(ws, ref)
+    sid, forked = _session_args(ws, meta.id, resume, fork)
     console.print(f"[dim]editing {meta.title or meta.id} — budget {budget:,} chars[/dim]")
-    result = run_editor_sync(ws, meta.id, task_prompt, budget_chars=budget, model=model)
+    result = run_editor_sync(
+        ws, meta.id, task_prompt, budget_chars=budget, model=model, resume=sid, fork=forked
+    )
     _apply_result(ws, meta, result, reel=reel, plan_only=plan_only)
 
 
@@ -123,6 +141,7 @@ def _apply_result(ws, meta, result, reel: bool = False, plan_only: bool = False)
                       + "; ".join(problems) + "[/yellow]")
     edl_path = ws.renders_dir(meta.id) / "edl.json"
     edl_path.write_text(json.dumps(edl_to_dict(edl), indent=2), encoding="utf-8")
+    save_checkpoint(ws, meta.id, edl_to_dict(edl), "plan" if plan_only else "render")
     if plan_only:
         _print_plan(ws, meta, edl, result)
         console.print(
@@ -133,6 +152,7 @@ def _apply_result(ws, meta, result, reel: bool = False, plan_only: bool = False)
         console.print(
             f"[dim]budget used: {result.chars_used:,} chars, {result.num_turns} turns[/dim]"
         )
+        _say_session(result)
         return
     outputs = render_edl(ws, edl)
     if reel and len(edl.cuts) > 1:
@@ -143,6 +163,16 @@ def _apply_result(ws, meta, result, reel: bool = False, plan_only: bool = False)
         console.print(f"  {p}")
     console.print(f"  receipts: {receipts}")
     console.print(f"[dim]budget used: {result.chars_used:,} chars, {result.num_turns} turns[/dim]")
+    _say_session(result)
+
+
+def _say_session(result) -> None:
+    sid = getattr(result, "session_id", "")
+    if sid:
+        console.print(
+            f"[dim]session {sid[:8]} — iterate with --resume {sid[:8]},"
+            f" branch with --fork {sid[:8]}[/dim]"
+        )
 
 
 def _print_plan(ws: Workspace, meta: VideoMeta, edl, result) -> None:
@@ -232,6 +262,12 @@ def ask(
     question: str,
     budget: int = typer.Option(60_000, help="tool-result budget in chars"),
     model: str | None = typer.Option(None, help="override CUTROOM_MODEL"),
+    resume: str | None = typer.Option(
+        None, "--resume", metavar="SESSION", help="continue a previous session (id prefix)"
+    ),
+    fork: str | None = typer.Option(
+        None, "--fork", metavar="SESSION", help="branch a previous session into a new one"
+    ),
 ) -> None:
     """Answer a question about the video with [mm:ss] citations."""
     from cutroom.agent.prompts import task_ask
@@ -239,11 +275,16 @@ def ask(
 
     ws = _ws()
     meta = _resolve(ws, video)
-    result = run_editor_sync(ws, meta.id, task_ask(question), budget_chars=budget, model=model)
+    sid, forked = _session_args(ws, meta.id, resume, fork)
+    result = run_editor_sync(
+        ws, meta.id, task_ask(question), budget_chars=budget, model=model,
+        resume=sid, fork=forked,
+    )
     _say(result.final_text)
     if not result.ok:
         err.print(f"answer may be incomplete — the editor stopped early ({result.error})")
     console.print(f"[dim]budget used: {result.chars_used:,} chars, {result.num_turns} turns[/dim]")
+    _say_session(result)
 
 
 @app.command()
@@ -358,6 +399,9 @@ def render(
         edl.target = target
     if captions is not None:
         edl.captions = captions
+    # Checkpoint what is about to render — this is where human edits to edl.json
+    # enter the undo history (dedupe makes it a no-op when nothing changed).
+    save_checkpoint(ws, meta.id, edl_to_dict(edl), "render")
     outputs = render_edl(ws, edl, basename=basename)
     receipts = write_receipts(ws, edl, outputs)
     console.print(f"[bold green]{len(outputs)} clip(s) re-rendered[/bold green]")
@@ -375,11 +419,106 @@ def cut(
     plan: bool = typer.Option(False, "--plan", help="review the plan before rendering"),
     budget: int = typer.Option(120_000),
     model: str | None = typer.Option(None),
+    resume: str | None = typer.Option(
+        None, "--resume", metavar="SESSION", help="continue a previous session (id prefix)"
+    ),
+    fork: str | None = typer.Option(
+        None, "--fork", metavar="SESSION",
+        help="branch a previous session: try a different cut without re-paying investigation",
+    ),
 ) -> None:
     """Free-form edit instruction → EDL → rendered clips (+ one concatenated reel)."""
     from cutroom.agent.prompts import task_cut
 
-    _run_edit_task(video, task_cut(instruction, vertical), budget, model, reel=True, plan_only=plan)
+    _run_edit_task(video, task_cut(instruction, vertical), budget, model,
+                   reel=True, plan_only=plan, resume=resume, fork=fork)
+
+
+@app.command()
+@friendly
+def sessions(video: str) -> None:
+    """Editor sessions for a video — resume (--resume) or branch (--fork) any of them."""
+    from cutroom.sessions import list_sessions
+
+    ws = _ws()
+    meta = _resolve(ws, video)
+    recs = list_sessions(ws, meta.id)
+    if not recs:
+        console.print("no sessions yet — any ask/cut/highlights run creates one")
+        return
+    table = Table("session", "when", "task", "turns", "spent", "edl", "lineage")
+    for r in recs:
+        lineage = ""
+        if r.get("resumed_from"):
+            lineage = ("fork of " if r.get("forked") else "resumed ") + r["resumed_from"][:8]
+        task = r.get("task", "")[:48]
+        if r.get("role") == "scout":
+            task = f"scout: {task}"[:48]
+        table.add_row(
+            r["session_id"][:8], r.get("ts", "")[:16], task,
+            str(r.get("turns", "")), f"{r.get('spent', 0):,}",
+            "yes" if r.get("edl") else "", lineage,
+        )
+    console.print(table)
+    console.print(
+        f"[dim]continue:  cutroom ask {meta.id} \"...\" --resume <session>"
+        f"   ·   branch:  cutroom cut {meta.id} \"...\" --fork <session>[/dim]"
+    )
+
+
+@app.command()
+@friendly
+def checkpoints(
+    video: str,
+    diff: str | None = typer.Option(
+        None, "--diff", metavar="CHECKPOINT",
+        help="show what changed from CHECKPOINT to the current edl.json",
+    ),
+) -> None:
+    """EDL undo history: every accepted/saved edit list, independent of any session."""
+    from cutroom.checkpoints import diff_edls, list_checkpoints, load_checkpoint
+
+    ws = _ws()
+    meta = _resolve(ws, video)
+    if diff is not None:
+        edl_path = ws.renders_dir(meta.id) / "edl.json"
+        if not edl_path.exists():
+            err.print(f"no current EDL at {edl_path} to diff against")
+            raise typer.Exit(1)
+        old = load_checkpoint(ws, meta.id, diff)["edl"]
+        current = json.loads(edl_path.read_text(encoding="utf-8"))
+        lines = diff_edls(old, current)
+        if not lines:
+            console.print(f"current edl.json is identical to {diff}")
+            return
+        console.print(f"[bold]{diff} -> current edl.json[/bold]")
+        for line in lines:
+            _say(f"  {line}")
+        return
+    cps = list_checkpoints(ws, meta.id)
+    if not cps:
+        console.print("no checkpoints yet — they appear when an edit task lands an EDL")
+        return
+    table = Table("id", "when", "source", "cuts", "total")
+    for cp in cps:
+        table.add_row(cp.id, cp.ts, cp.source, str(cp.n_cuts), f"{cp.total_secs:.1f}s")
+    console.print(table)
+    console.print(f"[dim]restore with:  cutroom restore {meta.id} <id>[/dim]")
+
+
+@app.command()
+@friendly
+def restore(video: str, checkpoint: str) -> None:
+    """Restore renders/edl.json to a checkpoint (current state is checkpointed first)."""
+    from cutroom.checkpoints import restore_checkpoint
+
+    ws = _ws()
+    meta = _resolve(ws, video)
+    pre_id, edl_path = restore_checkpoint(ws, meta.id, checkpoint)
+    console.print(f"[bold green]restored[/bold green] {checkpoint} -> {edl_path}")
+    if pre_id:
+        console.print(f"previous state saved as [bold]{pre_id}[/bold] (restore is undoable)")
+    console.print(f"[dim]render it with:  cutroom render {meta.id}[/dim]")
 
 
 def _summarize_scenes(ws: Workspace, video_id: str) -> None:

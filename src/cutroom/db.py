@@ -2,7 +2,7 @@
 
 Layout: $CUTROOM_HOME (default ~/.cutroom)/
     library.db
-    media/<video_id>/{source.mp4, audio.wav, frames/, renders/}
+    media/<video_id>/{source.mp4, audio.wav, frames/, renders/, checkpoints/, sessions/}
 
 All reads return domain types from cutroom.types. FTS5 (external content table)
 indexes segment text for budgeted transcript search.
@@ -113,6 +113,16 @@ class Workspace:
 
     def renders_dir(self, video_id: str) -> Path:
         d = self.media_dir(video_id) / "renders"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def checkpoints_dir(self, video_id: str) -> Path:
+        d = self.media_dir(video_id) / "checkpoints"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def sessions_dir(self, video_id: str) -> Path:
+        d = self.media_dir(video_id) / "sessions"
         d.mkdir(exist_ok=True)
         return d
 

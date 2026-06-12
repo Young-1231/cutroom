@@ -45,6 +45,15 @@ def test_toolkit_shape(kit):
     assert kit["registry"] == {"viewed_frames": [], "moments": [], "edl": None}
 
 
+def test_toolkit_exclude_strips_tool_entirely(seeded_ws):
+    """Scout isolation: an excluded tool is absent from names AND handlers — it never
+    enters the agent's context, so 'scouts cannot finalize' is code-enforced."""
+    out = make_toolkit(seeded_ws, VID, Ledger(1000), {}, exclude=("propose_edl",))
+    assert "mcp__cutroom__propose_edl" not in out["tool_names"]
+    assert "propose_edl" not in out["handlers"]
+    assert "mcp__cutroom__mark_moment" in out["tool_names"]  # marking stays
+
+
 def test_get_video_map_contains_scene_titles(kit):
     pytest.importorskip("cutroom.index.map")
     text = text_of(call(kit["handlers"]["get_video_map"]))

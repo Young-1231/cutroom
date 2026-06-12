@@ -12,7 +12,11 @@ cutroom recipe podcast-shorts <video>         # named expert workflows (see `cut
 cutroom ask <video> "what did she say about pricing?"   # answers with [mm:ss] citations
 cutroom chapters <video>                      # YouTube-ready chapter markers
 cutroom cut <video> "make a 30s teaser focused on the demo failure"
+cutroom cut <video> "tighter, 10s" --fork <session>   # branch a session: new cut style,
+                                              # keeps the investigation already paid for
 cutroom render <video> --target vertical      # re-render the saved EDL, no agent run
+cutroom sessions <video>                      # past editor sessions (resume / fork any)
+cutroom checkpoints <video>                   # EDL undo history; restore any state
 ```
 
 ## Why
@@ -152,7 +156,24 @@ Codex, OpenClaw):
 - **Fan-out (parallel sub-agents).** `--fanout` splits a long video into windows and
   runs one scout agent per window concurrently, then merges and globally ranks their
   picks — faster and cheaper than one agent scanning an hour serially, and each kept
-  moment still carries its viewed-frame receipts.
+  moment still carries its viewed-frame receipts. Scouts are isolated by construction:
+  `propose_edl` is stripped from their toolkit entirely, so only the orchestrator can
+  assemble an EDL.
+- **Lifecycle gates + audit trail (hooks).** Budget and evidence rules are enforced at
+  the harness layer, not just inside tool handlers: a PreToolUse gate denies
+  investigation once the budget is spent and rejects any cut citing a frame the agent
+  never actually viewed; every tool call, denial, and session summary lands in a
+  per-video `trail.jsonl` with per-call costs.
+- **Checkpoints (shadow-VCS over the EDL).** Every accepted or saved edit list becomes
+  an immutable checkpoint — "undo to before that cut", independent of any session.
+  `cutroom checkpoints <video> --diff cp_0002` shows cut-aware diffs
+  (`~ cut 0 [68.46-87.82] -> [68.46-81.82]`); `cutroom restore` snapshots the current
+  state first, so restores are themselves undoable.
+- **Sessions: resume & fork.** Every run prints a session handle. `--resume` continues
+  it with full memory; `--fork` branches it to try a different cut style without
+  re-paying the investigation. In a real run, recutting a 20s clip into a 10s teaser
+  via `--fork` cost 1,500 budget chars in 4 turns versus the parent's 12,489 in 13 —
+  the fork reused the parent's viewed-frame receipts, and the evidence gate honored them.
 
 ## Design principles
 
@@ -168,9 +189,10 @@ Codex, OpenClaw):
 ## Status & roadmap
 
 M0 — all verbs (`log` / `list` / `map` / `ask` / `highlights` / `chapters` / `cut` /
-`render`) implemented and verified end-to-end on real footage; word-level burned
-captions (landscape + 9:16 vertical), adaptive scene segmentation, EDL persistence,
-receipts. 67 offline tests + a live agent e2e, ruff-clean.
+`render` / `sessions` / `checkpoints` / `restore`) implemented and verified end-to-end
+on real footage; word-level burned captions (landscape + 9:16 vertical), adaptive scene
+segmentation, EDL persistence, receipts, lifecycle hooks + audit trail, EDL checkpoints,
+session resume/fork. 117 offline tests + live agent e2e runs, ruff-clean.
 
 - **M1**: active-speaker-aware vertical crop (CPU face tracking); silence/filler-word trim
   presets; OTIO/EDL export for NLE handoff (DaVinci, Premiere).
