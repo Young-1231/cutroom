@@ -329,16 +329,23 @@ def highlights(
 
 
 @app.command("recipes")
+@friendly
 def list_recipes() -> None:
-    """Built-in editing recipes (named expert workflows)."""
-    from cutroom.recipes import RECIPES
+    """Editing recipes (named expert workflows) — built-in + your own .md files."""
+    from cutroom.recipes import load_recipes
 
-    table = Table("recipe", "format", "clips", "what it makes")
-    for r in RECIPES.values():
+    user_dir = _ws().home / "recipes"
+    table = Table("recipe", "format", "clips", "source", "what it makes")
+    for r in load_recipes(user_dir).values():
         table.add_row(r.name, "9:16" if r.vertical else "16:9",
-                      str(r.n) if r.n else "reel", r.summary)
+                      str(r.n) if r.n else "reel",
+                      "builtin" if r.source == "builtin" else "user", r.summary)
     console.print(table)
-    console.print("\n[dim]run one with:[/dim]  cutroom recipe <name> <video> [--plan]")
+    console.print(
+        "\n[dim]run one with:[/dim]  cutroom recipe <name> <video> [--plan]"
+        f"\n[dim]add your own:[/dim]  drop a .md file into {user_dir}"
+        " (frontmatter: summary/vertical/reel/budget/n; body = the guidance)"
+    )
 
 
 @app.command()
@@ -354,9 +361,10 @@ def recipe(
     """Run a named editing recipe (e.g. `cutroom recipe podcast-shorts <video>`)."""
     from cutroom.recipes import get_recipe, recipe_names
 
-    rec = get_recipe(name)
+    user_dir = _ws().home / "recipes"
+    rec = get_recipe(name, user_dir)
     if rec is None:
-        err.print(f"unknown recipe {name!r} — available: {', '.join(recipe_names())}")
+        err.print(f"unknown recipe {name!r} — available: {', '.join(recipe_names(user_dir))}")
         raise typer.Exit(1)
     _run_edit_task(
         video, rec.task_prompt(n_override=n), budget or rec.budget, model,

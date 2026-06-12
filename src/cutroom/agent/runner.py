@@ -39,10 +39,19 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 _READ_ONLY_BUILTIN = "Read"
 
 
-def _system_prompt(output_language: str | None) -> str:
-    if output_language is None:
-        return EDITOR_SYSTEM
-    return f"{EDITOR_SYSTEM}\n\nWrite all user-facing output in {output_language}."
+def _system_prompt(output_language: str | None, recipe_lines: str = "") -> str:
+    prompt = EDITOR_SYSTEM
+    if recipe_lines:
+        # Progressive disclosure: only name+summary in context; the body costs a
+        # load_recipe call, so unused expertise stays out of the window.
+        prompt += (
+            "\n\nRecipe expertise available (name: summary):\n" + recipe_lines
+            + "\nIf the task clearly matches one recipe, call load_recipe(name) once"
+            " before investigating; otherwise ignore them."
+        )
+    if output_language is not None:
+        prompt += f"\n\nWrite all user-facing output in {output_language}."
+    return prompt
 
 
 def _make_permission_gate(allowed: set[str]):
@@ -91,13 +100,19 @@ async def run_editor(
         # actually viewed in the parent session, not force it to re-view everything.
         registry["viewed_frames"] = load_state(ws, video_id, resume)
     # Scouts mark moments; only the orchestrator assembles EDLs. Dropping the tool
-    # from the server makes that code-enforced, not prompt-trusted.
+    # from the server makes that code-enforced, not prompt-trusted. Scouts also lose
+    # load_recipe + the recipe list: their window-scout prompt is the whole job.
     kit = make_toolkit(ws, video_id, ledger, registry,
-                       exclude=("propose_edl",) if role == "scout" else ())
+                       exclude=("propose_edl", "load_recipe") if role == "scout" else ())
+    recipe_lines = ""
+    if role != "scout":
+        from cutroom.recipes import load_recipes, recipe_summary_lines
+
+        recipe_lines = recipe_summary_lines(load_recipes(ws.home / "recipes", strict=False))
     allowed = {*kit["tool_names"], _READ_ONLY_BUILTIN}
     options = ClaudeAgentOptions(
         model=model or os.environ.get("CUTROOM_MODEL") or DEFAULT_MODEL,
-        system_prompt=_system_prompt(output_language),
+        system_prompt=_system_prompt(output_language, recipe_lines),
         mcp_servers={"cutroom": kit["server"]},
         allowed_tools=list(allowed),
         disallowed_tools=DENIED_BUILTINS,

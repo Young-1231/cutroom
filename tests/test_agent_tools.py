@@ -40,9 +40,21 @@ def test_toolkit_shape(kit):
     assert kit["tool_names"] == [
         f"mcp__cutroom__{n}"
         for n in ["get_video_map", "search_transcript", "read_transcript", "view_frames",
-                  "probe_audio", "mark_moment", "propose_edl"]
+                  "probe_audio", "load_recipe", "mark_moment", "propose_edl"]
     ]
     assert kit["registry"] == {"viewed_frames": [], "moments": [], "edl": None}
+
+
+def test_load_recipe_returns_guidance_and_charges(kit):
+    text = text_of(call(kit["handlers"]["load_recipe"], {"name": "teaser"}))
+    assert "cliffhanger" in text  # full body, not just the summary
+    assert kit["ledger"].breakdown.get("load_recipe", 0) > 0
+
+
+def test_load_recipe_unknown_name_lists_available(kit):
+    res = call(kit["handlers"]["load_recipe"], {"name": "nope"})
+    assert res.get("is_error") is True
+    assert "podcast-shorts" in text_of(res)
 
 
 def test_toolkit_exclude_strips_tool_entirely(seeded_ws):

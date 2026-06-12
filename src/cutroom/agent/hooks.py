@@ -45,7 +45,7 @@ _PREFIX = "mcp__cutroom__"
 INVESTIGATION_TOOLS = frozenset(
     _PREFIX + n
     for n in ("get_video_map", "search_transcript", "read_transcript",
-              "view_frames", "probe_audio")
+              "view_frames", "probe_audio", "load_recipe")
 )
 _MARK = _PREFIX + "mark_moment"
 _PROPOSE = _PREFIX + "propose_edl"

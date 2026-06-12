@@ -9,8 +9,8 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-1. **Bundle**：recipes → Skills progressive disclosure（~1-2d）· seatbelt 文件 allowlist
-   sandbox（~3-5d）。（AGENTS.md 已落：symlink → CLAUDE.md，2026-06-12）
+1. **Bundle（剩余）**：seatbelt 文件 allowlist sandbox（~3-5d）。
+   （AGENTS.md 已落 2026-06-12；recipes → Skills 已落，见已完成）
 2. **无标准机制、需自研**（调研未找到可抄的工业标准）：中途 steering/打断、verification/
    self-critique 回合、observability/trace（trail.jsonl 已是雏形）。是真实缺口但要自己设计。
 3. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
@@ -18,6 +18,15 @@
    checkpoint 与 session 记录已互通 id，机制就绪。
 
 ## 已完成
+
+- Recipes → Skills progressive disclosure（2026-06-12，范式吸收 #5a）：144 离线测试（+15）
+  + 真实 e2e。recipe 变成 SKILL.md 式文件（frontmatter: summary/vertical/reel/budget/n，
+  正文=专家指导）：内置 5 个迁到 recipes/builtin/*.md，用户把 .md 丢进
+  $CUTROOM_HOME/recipes/ 即生效（按文件名覆盖内置）。双模式调用：CLI 显式 +
+  模型自调用——系统提示只进 name:summary 行，新 load_recipe 工具按需取正文（计费、
+  预算耗尽被 hooks 拒）；scout 不带配方层。真实验证：teaser 任务首轮即
+  load_recipe(298 chars)，按配方出 3 刀 hook→build→cliffhanger 结构 plan。
+  注意到内层 CLI 有 ToolSearch 轮次开销（18 次/23 轮），待查能否禁用。
 
 - 强化 fan-out scout 隔离（2026-06-12，范式吸收 #4）：117 离线测试（+2）+ 真实 fanout
   e2e。scout 以 role="scout" 运行，make_toolkit `exclude` 把 propose_edl 从 MCP server

@@ -74,6 +74,16 @@ _MARK_ARGS = {
     },
     "required": ["t0", "t1", "reason", "segment_ids", "frame_ts"],
 }
+_RECIPE_ARGS = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "recipe name, from the recipe list in your instructions",
+        },
+    },
+    "required": ["name"],
+}
 _EDL_ARGS = {
     "type": "object",
     "properties": {
@@ -369,6 +379,26 @@ def make_toolkit(
         return reply("\n".join(lines), "probe_audio")
 
     @tool(
+        "load_recipe",
+        "Load the full expert guidance for a named editing recipe (the list in your"
+        " instructions shows only names + summaries). Cheap; load at most one.",
+        _RECIPE_ARGS,
+    )
+    async def load_recipe(args: dict[str, Any]) -> dict[str, Any]:
+        if ledger.exhausted:
+            return _text_only(EXHAUSTED_MSG)
+        from cutroom.recipes import load_recipes
+
+        name = str(args.get("name", "")).strip()
+        recipes = load_recipes(ws.home / "recipes", strict=False)
+        rec = recipes.get(name)
+        if rec is None:
+            return reply(
+                f"unknown recipe {name!r} — available: {', '.join(recipes)}", is_error=True
+            )
+        return reply(f"recipe {rec.name} — {rec.summary}\n\n{rec.guidance}", "load_recipe")
+
+    @tool(
         "mark_moment",
         "Register a candidate moment with evidence. frame_ts must be frames you actually"
         " viewed, inside the moment. Free.",
@@ -462,7 +492,7 @@ def make_toolkit(
         )
 
     tool_defs = [get_video_map, search_transcript, read_transcript, view_frames,
-                 probe_audio, mark_moment, propose_edl]
+                 probe_audio, load_recipe, mark_moment, propose_edl]
     tool_defs = [t for t in tool_defs if t.name not in exclude]
     server = create_sdk_mcp_server("cutroom", version="0.1.0", tools=tool_defs)
     return {

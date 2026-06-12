@@ -45,3 +45,11 @@ def test_runner_system_prompt_language():
 
     assert _system_prompt(None) == EDITOR_SYSTEM
     assert _system_prompt("English").endswith("Write all user-facing output in English.")
+
+
+def test_runner_system_prompt_recipe_disclosure():
+    from cutroom.agent.runner import _system_prompt
+
+    with_recipes = _system_prompt(None, "- teaser: one ~30s teaser")
+    assert "- teaser: one ~30s teaser" in with_recipes
+    assert "load_recipe" in with_recipes
