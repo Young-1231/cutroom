@@ -9,13 +9,14 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-发布门（等用户确认后执行，2026-06-12 已备齐）：
-1. `uv publish`（dist/ 已构建并 twine check 通过；需 PyPI token）。
-2. 仓库转 public（topics/About 已配好）+ 打 v0.1.0 tag + GitHub Release。
-3. 发布后把 README Install 节加 `uv tool install cutroom` 一行。
+1. **PyPI 发包（唯一剩余，等用户侧动作）**：在 pypi.org 给 repo 配 trusted publishing
+   （publisher: GitHub / Young-1231/cutroom / release.yml / environment: pypi），或把
+   PYPI_API_TOKEN 加进 repo secrets；然后手动触发 `release` workflow 即发布。
+   发包成功后：README Install 节加 `uv tool install cutroom` 一行。
+2. 传播：拿 demo GIF 发 HN (Show HN) / r/LocalLLaMA / X（用户自行决定时机与文案）。
 
-（2026-06 范式吸收 backlog 已全部清空：Bundle 三件、自研三件、M2 跑分、Checkpoint
-升级均落地，见已完成。）
+（2026-06 范式吸收 backlog 已全部清空；2026-06-12 已上线：仓库 public、v0.1.0 tag +
+GitHub Release（带 wheel/sdist）、release.yml 一键发包 workflow、README badges。）
 
 ## 已完成
 
