@@ -521,6 +521,77 @@ def cut(
 
 @app.command()
 @friendly
+def trail(
+    video: str,
+    session: str | None = typer.Option(
+        None, "--session", metavar="SESSION",
+        help="full call-by-call timeline for one session (id prefix)",
+    ),
+    denials: bool = typer.Option(
+        False, "--denials", help="only gate denials (sandbox, budget, evidence)"
+    ),
+) -> None:
+    """Audit trail: every tool call, charge, gate denial, and session summary."""
+    from cutroom.trail import group_sessions, read_trail, session_records
+
+    ws = _ws()
+    meta = _resolve(ws, video)
+    records = read_trail(ws.renders_dir(meta.id) / "trail.jsonl")
+    if not records:
+        console.print("no trail yet — any agent run writes one")
+        return
+    if denials:
+        denies = [r for r in records if r.get("event") == "deny"]
+        if not denies:
+            console.print("no denials recorded — every call passed the gates")
+            return
+        for r in denies:
+            console.print(f"{r.get('ts', '')[:19]}  ✗ {r.get('tool', '')}"
+                          f" [{r.get('session', '')[:8]}]  {r.get('reason', '')}",
+                          markup=False, highlight=False)
+        return
+    if session is not None:
+        for r in session_records(records, session):
+            ts = r.get("ts", "")[11:19]
+            ev = r.get("event")
+            if ev == "tool":
+                tool_name = str(r.get("tool", "")).removeprefix("mcp__cutroom__")
+                line = (f"{ts}  {tool_name:<18} +{r.get('charged', 0):>6,}"
+                        f"  remaining {r.get('remaining', 0):>8,}")
+                if r.get("edl_accepted"):
+                    line += f"  EDL accepted → {r.get('checkpoint', '')}"
+                console.print(line, markup=False, highlight=False)
+            elif ev == "deny":
+                console.print(f"{ts}  ✗ deny {r.get('tool', '')} — {r.get('reason', '')}",
+                              style="yellow", markup=False, highlight=False)
+            elif ev == "tool_error":
+                console.print(f"{ts}  ! error {r.get('tool', '')} — {r.get('error', '')}",
+                              style="red", markup=False, highlight=False)
+            elif ev == "stop":
+                bd = ", ".join(f"{k} {v:,}" for k, v in (r.get("breakdown") or {}).items())
+                console.print(
+                    f"{ts}  ■ stop — spent {r.get('spent', 0):,}/{r.get('total', 0):,}"
+                    f" ({bd}); {r.get('moments', 0)} moments,"
+                    f" edl={'yes' if r.get('edl') else 'no'}",
+                    markup=False, highlight=False)
+        return
+    table = Table("session", "started", "calls", "spent", "denied", "errors",
+                  "moments", "edl")
+    for st in group_sessions(records):
+        table.add_row(
+            st.session[:8], st.started[:19], str(st.calls), f"{st.spent:,}",
+            str(st.denies) if st.denies else "", str(st.errors) if st.errors else "",
+            str(st.moments), "yes" if st.edl else "",
+        )
+    console.print(table)
+    console.print(
+        f"[dim]drill in:  cutroom trail {meta.id} --session <id>"
+        f"   ·   gate denials:  cutroom trail {meta.id} --denials[/dim]"
+    )
+
+
+@app.command()
+@friendly
 def sessions(video: str) -> None:
     """Editor sessions for a video — resume (--resume) or branch (--fork) any of them."""
     from cutroom.sessions import list_sessions

@@ -9,13 +9,19 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-1. **无标准机制、需自研（剩余）**：observability/trace 升级（trail.jsonl 已是雏形）。
-   （steering、verification 已落，见已完成）
-3. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
-4. **Checkpoint 升级**（等 resume/fork 用例沉淀）：Cline 三粒度 restore（EDL / 会话 / 两者），
+1. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
+2. **Checkpoint 升级**：Cline 三粒度 restore（EDL / 会话 / 两者），
    checkpoint 与 session 记录已互通 id，机制就绪。
+（"无标准机制、需自研"三项 steering/verification/observability 已全部落地，见已完成）
 
 ## 已完成
+
+- Observability：`cutroom trail` CLI（2026-06-12，自研机制 #3，"无标准机制"三连收官）：
+  173 离线测试（+7）+ 真实数据验证。trail.py 解析聚合（损坏行跳过不致命；fan-out 多
+  会话交错按 session 分组），CLI 三视图：默认每会话汇总表（calls/spent/denied/errors/
+  moments/edl）、--session 逐调用时间线（计费/余额、deny 黄色、EDL accepted → checkpoint
+  id、stop 含 breakdown）、--denials 跨会话门拒绝审计。真实验证：对真实 trail 钻取出
+  此前对抗测试的 sandbox deny 与逐调用账目。
 
 - Verification/self-critique 回合（2026-06-12，自研机制 #2）：166 离线测试（+10）+ 真实
   e2e。`--verify`：EDL 落地后开**全新上下文** critic 会话（fresh eyes 而非窗口内自评，
