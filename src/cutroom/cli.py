@@ -138,7 +138,7 @@ def _verify_and_revise(ws, meta, result, task_prompt: str, budget: int, model):
     console.print("[dim]verify: one revision round in the editor's session…[/dim]")
     revised = run_editor_sync(
         ws, meta.id, task_revise(issues), budget_chars=review_budget, model=model,
-        resume=result.session_id, on_progress=_progress,
+        resume=result.session_id or None, on_progress=_progress,
     )
     if revised.edl is not None:
         return revised

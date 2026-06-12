@@ -66,6 +66,22 @@ def test_score_edl_flags_violations(seeded_ws):
     assert score["checks"]["boundaries"] is False
 
 
+def test_score_edl_checks_vertical_target(seeded_ws):
+    edges = natural_edges(seeded_ws, VID)
+    edl = {"cuts": [cut(edges[1], edges[3])], "target": "landscape"}
+    score = score_edl(seeded_ws, VID, edl, {"vertical": True})
+    assert score["checks"]["target"] is False
+    edl["target"] = "vertical"
+    assert score_edl(seeded_ws, VID, edl, {"vertical": True})["checks"]["target"] is True
+
+
+def test_score_edl_min_cut_zero_still_checks(seeded_ws):
+    edges = natural_edges(seeded_ws, VID)
+    edl = {"cuts": [cut(edges[1], edges[3])]}
+    score = score_edl(seeded_ws, VID, edl, {"min_cut": 0, "max_cut": 0.001})
+    assert score["checks"]["cut_lengths"] is False  # max bound enforced
+
+
 def test_load_tasks_validates(tmp_path):
     good = tmp_path / "tasks.json"
     good.write_text(json.dumps([{"name": "a", "instruction": "do"}]))

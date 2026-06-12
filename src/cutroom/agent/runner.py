@@ -197,6 +197,9 @@ async def _drive_session(
                     out["error"] = msg.subtype or "error"
                     if getattr(msg, "api_error_status", None):
                         out["error"] += f" (api status {msg.api_error_status})"
+        # Deliberate: guidance that lands just AFTER the final result still gets
+        # injected — the session re-engages for one more round (multi-turn query
+        # on a completed response is the SDK's normal conversation flow).
         steer_text = steering.pop() if steering else None
         if steer_text is None:
             return out

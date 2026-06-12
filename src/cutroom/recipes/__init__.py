@@ -66,6 +66,7 @@ def parse_recipe(text: str, name: str, source: str = "builtin") -> Recipe:
     if not lines or lines[0].strip() != "---":
         raise RecipeError(f"{where}: must start with a `---` frontmatter block")
     fields: dict = {"vertical": False, "reel": False, "budget": 120_000, "n": 0}
+    seen: set[str] = set()
     body_start = None
     for i, line in enumerate(lines[1:], start=1):
         if line.strip() == "---":
@@ -80,6 +81,9 @@ def parse_recipe(text: str, name: str, source: str = "builtin") -> Recipe:
                 f"{where}: bad frontmatter line {line!r}"
                 f" (keys: {', '.join(sorted(FRONTMATTER_KEYS))})"
             )
+        if key in seen:
+            raise RecipeError(f"{where}: duplicate frontmatter key {key!r}")
+        seen.add(key)
         fields[key] = _parse_value(key, raw.strip().strip("\"'"), where)
     if body_start is None:
         raise RecipeError(f"{where}: frontmatter never closed with `---`")

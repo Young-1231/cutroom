@@ -59,6 +59,7 @@ def test_parse_recipe_defaults():
     ("---\nsummary: x\nnever closed", "never closed"),
     ("---\nvertical: true\n---\nbody", "summary"),
     ("---\nsummary: x\n---\n", "empty"),
+    ("---\nsummary: a\nsummary: b\n---\nbody", "duplicate"),
 ])
 def test_parse_recipe_friendly_errors(text, fragment):
     with pytest.raises(RecipeError, match=fragment):

@@ -62,10 +62,12 @@ def score_edl(ws: Workspace, video_id: str, edl_dict: dict | None, spec: dict) -
         )
     if spec.get("n_cuts"):
         checks["n_cuts"] = len(cuts) == spec["n_cuts"]
-    if spec.get("min_cut") or spec.get("max_cut"):
+    if spec.get("min_cut") is not None or spec.get("max_cut") is not None:
         lo = spec.get("min_cut", 0.0)
         hi = spec.get("max_cut", float("inf"))
         checks["cut_lengths"] = all(lo <= d <= hi for d in durations)
+    if spec.get("vertical"):
+        checks["target"] = edl_dict.get("target") == "vertical"
     checks["receipts"] = all(
         (c.get("evidence") or {}).get("segment_ids")
         and (c.get("evidence") or {}).get("frame_ts")
