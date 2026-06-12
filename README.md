@@ -3,6 +3,8 @@
 **A film-editor agent that logs your footage before it cuts.**
 Local-first · GPU-free · every cut ships with receipts.
 
+![cutroom demo — a real run at 3.5× speed](docs/demo.gif)
+
 ```
 cutroom log https://youtube.com/watch?v=...   # ingest + index ("log the footage")
 cutroom highlights <video> -n 3 --vertical    # agent finds & renders the best moments
@@ -104,6 +106,22 @@ Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), and a logged-in
 > Homebrew bottles) ship without it — cutroom detects this and automatically falls back
 > to the bundled [static-ffmpeg](https://pypi.org/project/static-ffmpeg/), or set
 > `CUTROOM_FFMPEG=/path/to/your/ffmpeg`.
+
+**Do I need an API key?** No, if you have Claude Code: cutroom reuses its login via the
+Agent SDK. Otherwise set `ANTHROPIC_API_KEY`.
+
+**What leaves my machine?** Download, transcription, indexing, and rendering are all
+local. The agent's reasoning runs on the Claude API, so the model sees what its tools
+return: the compact video map, the transcript snippets it reads, and the frames it
+views — never the video file or the full transcript. The budget ledger caps exactly
+this surface.
+
+**What does a run cost?** Tool results are budgeted per run (`--budget`, default
+60–120k chars ≈ a fraction of one context window). On the bench tasks below, real edits
+consumed 12–21k chars in 16–22 turns each.
+
+**GPU?** None, ever. faster-whisper runs on CPU (Apple Silicon friendly); rendering is
+ffmpeg.
 
 ## Usage
 

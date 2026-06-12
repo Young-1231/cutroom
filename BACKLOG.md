@@ -9,10 +9,21 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
+发布门（等用户确认后执行，2026-06-12 已备齐）：
+1. `uv publish`（dist/ 已构建并 twine check 通过；需 PyPI token）。
+2. 仓库转 public（topics/About 已配好）+ 打 v0.1.0 tag + GitHub Release。
+3. 发布后把 README Install 节加 `uv tool install cutroom` 一行。
+
 （2026-06 范式吸收 backlog 已全部清空：Bundle 三件、自研三件、M2 跑分、Checkpoint
-升级均落地，见已完成。下一步进入发布产品化。）
+升级均落地，见已完成。）
 
 ## 已完成
+
+- 发布产品化（2026-06-12）：README 大改版（hero demo GIF + 8 特性段 + FAQ + 跑分表 +
+  状态更新）；docs/demo.gif —— asciinema 录**真实运行**（list → cut --plan 进度行全程
+  → checkpoints，agent 自己 load_recipe(teaser) 出镜）3.5× 加速 19s/438KB，
+  scripts/record_demo.sh 可复录；PyPI 就绪（classifiers/keywords/urls，uv build +
+  twine check 双过，wheel 含内置 recipes）；GitHub topics ×10。
 
 - M2 Repurpose 跑分 + CI（2026-06-12）：184 离线测试（bench +8）+ 真实跑分。cutroom.bench
   只测机械可证伪项（EDL 产出 / 时长±tol / 刀数 / receipts 全覆盖 / 剪点距自然边界
