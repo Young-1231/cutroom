@@ -99,6 +99,13 @@ Every render ships a `receipts.md`:
 
 ```bash
 brew install ffmpeg yt-dlp        # macOS; Linux: apt install ffmpeg && pipx install yt-dlp
+uv tool install cutroom           # or: pipx install cutroom
+cutroom --help
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/Young-1231/cutroom && cd cutroom
 uv sync
 uv run cutroom --help
