@@ -64,6 +64,44 @@ def task_scout_window(t0: float, t1: float, k: int, focus: str = "") -> str:
     )
 
 
+def task_verify(cuts: list[dict], task_summary: str = "") -> str:
+    """Independent review of an accepted EDL — run in a FRESH session (clean context),
+    so the critique is fresh-eyes, not self-grading inside the editor's own window."""
+    lines = []
+    for i, c in enumerate(cuts):
+        ev = c.get("evidence") or {}
+        lines.append(
+            f"- cut {i}: [{c['t0']:.2f}s–{c['t1']:.2f}s] {c.get('label', '')!r}"
+            f" (cites segments {ev.get('segment_ids', [])},"
+            f" frames {ev.get('frame_ts', [])})"
+        )
+    task = f' for the task: "{task_summary}"' if task_summary else ""
+    return (
+        f"You are reviewing an edit decision list another editor produced{task}."
+        " You did NOT make these cuts — judge them on the footage, not on trust.\n"
+        "Cuts under review:\n" + "\n".join(lines) + "\n\n"
+        "For EACH cut: read the transcript at both boundaries (does it start and end"
+        " on clean speech edges, no mid-sentence entry?), view at least one frame"
+        " inside the cut (does the picture match the label?), and judge whether the"
+        " cut serves the task. Use probe_audio where boundaries look suspicious.\n"
+        "Then call submit_review exactly once with a verdict per cut: ok=true, or"
+        " ok=false plus a specific, actionable issue (what is wrong and how to fix"
+        " it, e.g. 'starts mid-sentence — push t0 to 68.4 where the sentence"
+        " begins'). Flag only real problems a viewer would notice; style nitpicks"
+        " are not issues."
+    )
+
+
+def task_revise(issues: list[str]) -> str:
+    """One bounded revision round, resumed into the editor's own session."""
+    return (
+        "[REVIEW — an independent reviewer checked your accepted EDL with fresh eyes]\n"
+        "Flagged issues:\n" + "\n".join(f"- {i}" for i in issues) + "\n"
+        "Fix exactly these issues and call propose_edl with the corrected EDL."
+        " Keep every cut the reviewer did not flag. View any new frame you cite."
+    )
+
+
 def task_cut(instruction: str, vertical: bool) -> str:
     target = "vertical" if vertical else "landscape"
     return (

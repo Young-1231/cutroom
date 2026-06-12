@@ -40,7 +40,8 @@ def test_toolkit_shape(kit):
     assert kit["tool_names"] == [
         f"mcp__cutroom__{n}"
         for n in ["get_video_map", "search_transcript", "read_transcript", "view_frames",
-                  "probe_audio", "load_recipe", "mark_moment", "propose_edl"]
+                  "probe_audio", "load_recipe", "mark_moment", "propose_edl",
+                  "submit_review"]
     ]
     assert kit["registry"] == {"viewed_frames": [], "moments": [], "edl": None}
 

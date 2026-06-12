@@ -82,6 +82,22 @@ class EditorResult:
     ok: bool = True
     error: str | None = None  # set when the session ended abnormally (max_turns, API error)
     session_id: str = ""  # resume/fork handle (`cutroom sessions`)
+    review: dict | None = None  # critic sessions: {"verdicts": [...], "summary": str}
+
+
+def _excludes_for_role(role: str) -> tuple[str, ...]:
+    """Per-role toolkit surface, enforced by dropping tools from the MCP server.
+
+    - editor: everything except submit_review (that is the critic's verdict channel)
+    - scout : marks moments only — no EDL assembly, no recipe layer, no reviewing
+    - critic: investigates and judges — cannot mark, cut, or pull recipe guidance,
+      so its review stays grounded in the footage, not in editing ambitions
+    """
+    if role == "scout":
+        return ("propose_edl", "load_recipe", "submit_review")
+    if role == "critic":
+        return ("propose_edl", "mark_moment", "load_recipe")
+    return ("submit_review",)
 
 
 _STEER_WRAPPER = (
@@ -209,13 +225,9 @@ async def run_editor(
         # Rehydrate earned evidence: the gate must keep honoring frames the agent
         # actually viewed in the parent session, not force it to re-view everything.
         registry["viewed_frames"] = load_state(ws, video_id, resume)
-    # Scouts mark moments; only the orchestrator assembles EDLs. Dropping the tool
-    # from the server makes that code-enforced, not prompt-trusted. Scouts also lose
-    # load_recipe + the recipe list: their window-scout prompt is the whole job.
-    kit = make_toolkit(ws, video_id, ledger, registry,
-                       exclude=("propose_edl", "load_recipe") if role == "scout" else ())
+    kit = make_toolkit(ws, video_id, ledger, registry, exclude=_excludes_for_role(role))
     recipe_lines = ""
-    if role != "scout":
+    if role == "editor":
         from cutroom.recipes import load_recipes, recipe_summary_lines
 
         recipe_lines = recipe_summary_lines(load_recipes(ws.home / "recipes", strict=False))
@@ -279,6 +291,7 @@ async def run_editor(
         ok=out["ok"],
         error=out["error"],
         session_id=out["session_id"],
+        review=registry.get("review"),
     )
 
 

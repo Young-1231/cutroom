@@ -74,6 +74,28 @@ _MARK_ARGS = {
     },
     "required": ["t0", "t1", "reason", "segment_ids", "frame_ts"],
 }
+_REVIEW_ARGS = {
+    "type": "object",
+    "properties": {
+        "verdicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "cut": {"type": "integer", "description": "cut index under review"},
+                    "ok": {"type": "boolean"},
+                    "issue": {
+                        "type": "string",
+                        "description": "required when ok=false: what is wrong + how to fix",
+                    },
+                },
+                "required": ["cut", "ok"],
+            },
+        },
+        "summary": {"type": "string", "description": "one-line overall judgment"},
+    },
+    "required": ["verdicts", "summary"],
+}
 _RECIPE_ARGS = {
     "type": "object",
     "properties": {
@@ -445,6 +467,38 @@ def make_toolkit(
         )
 
     @tool(
+        "submit_review",
+        "Submit your per-cut verdicts on the EDL under review. Call exactly once,"
+        " covering every cut. Free.",
+        _REVIEW_ARGS,
+    )
+    async def submit_review(args: dict[str, Any]) -> dict[str, Any]:
+        raw = args.get("verdicts")
+        if not isinstance(raw, list) or not raw:
+            return reply("submit_review needs a non-empty verdicts array", is_error=True)
+        verdicts: list[dict[str, Any]] = []
+        problems: list[str] = []
+        for v in raw:
+            if not isinstance(v, dict) or not isinstance(v.get("cut"), int):
+                problems.append(f"each verdict needs an integer cut index, got {v!r}")
+                continue
+            ok_flag = bool(v.get("ok"))
+            issue = str(v.get("issue", "")).strip()
+            if not ok_flag and not issue:
+                problems.append(f"cut {v['cut']}: ok=false needs a specific issue")
+                continue
+            verdicts.append({"cut": v["cut"], "ok": ok_flag, "issue": issue})
+        if problems:
+            return reply("submit_review rejected:\n- " + "\n- ".join(problems), is_error=True)
+        registry["review"] = {
+            "verdicts": verdicts, "summary": str(args.get("summary", "")).strip()
+        }
+        flagged = sum(1 for v in verdicts if not v["ok"])
+        return reply(
+            f"review recorded: {len(verdicts)} verdicts, {flagged} flagged"
+        )
+
+    @tool(
         "propose_edl",
         "Submit the final edit decision list. Each cut needs segment_ids + viewed frame_ts."
         " Returns precise errors to fix, or confirms acceptance. Free.",
@@ -492,7 +546,7 @@ def make_toolkit(
         )
 
     tool_defs = [get_video_map, search_transcript, read_transcript, view_frames,
-                 probe_audio, load_recipe, mark_moment, propose_edl]
+                 probe_audio, load_recipe, mark_moment, propose_edl, submit_review]
     tool_defs = [t for t in tool_defs if t.name not in exclude]
     server = create_sdk_mcp_server("cutroom", version="0.1.0", tools=tool_defs)
     return {

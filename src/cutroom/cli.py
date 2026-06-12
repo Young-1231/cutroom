@@ -87,6 +87,7 @@ def _run_edit_task(
     ref: str, task_prompt: str, budget: int, model: str | None,
     reel: bool = False, plan_only: bool = False,
     resume: str | None = None, fork: str | None = None, steer: bool = False,
+    verify: bool = False,
 ) -> None:
     """Single-agent edit: run the editor, then apply its result (plan or render)."""
     from cutroom.agent.runner import run_editor_sync
@@ -101,7 +102,48 @@ def _run_edit_task(
         ws, meta.id, task_prompt, budget_chars=budget, model=model, resume=sid, fork=forked,
         steer=steer, on_progress=_progress,
     )
+    if verify and result.edl is not None:
+        result = _verify_and_revise(ws, meta, result, task_prompt, budget, model)
     _apply_result(ws, meta, result, reel=reel, plan_only=plan_only)
+
+
+def _verify_and_revise(ws, meta, result, task_prompt: str, budget: int, model):
+    """Self-critique round: a FRESH critic session judges the accepted EDL on the
+    footage (it cannot cut, mark, or load recipes); flagged issues get exactly one
+    revision round, resumed into the editor's own session so receipts carry over."""
+    from cutroom.agent.prompts import task_revise, task_verify
+    from cutroom.agent.runner import run_editor_sync
+
+    review_budget = max(20_000, budget // 4)
+    console.print(f"[dim]verify: fresh-eyes review — budget {review_budget:,} chars[/dim]")
+    critic = run_editor_sync(
+        ws, meta.id, task_verify(edl_to_dict(result.edl)["cuts"], task_prompt[:200]),
+        budget_chars=review_budget, model=model, role="critic", on_progress=_progress,
+    )
+    if not critic.review:
+        console.print("[yellow]verify: no structured verdicts came back —"
+                      " keeping the EDL unreviewed[/yellow]")
+        return result
+    verdicts = critic.review["verdicts"]
+    issues = [f"cut {v['cut']}: {v['issue']}" for v in verdicts if not v["ok"]]
+    summary = critic.review.get("summary", "")
+    if not issues:
+        console.print(f"verify ✓ all {len(verdicts)} cuts confirmed — {summary}",
+                      style="green", markup=False)
+        return result
+    console.print(f"verify ✗ {len(issues)} of {len(verdicts)} cuts flagged:",
+                  style="yellow", markup=False)
+    for issue in issues:
+        console.print(f"  {issue}", style="yellow", markup=False)
+    console.print("[dim]verify: one revision round in the editor's session…[/dim]")
+    revised = run_editor_sync(
+        ws, meta.id, task_revise(issues), budget_chars=review_budget, model=model,
+        resume=result.session_id, on_progress=_progress,
+    )
+    if revised.edl is not None:
+        return revised
+    console.print("[yellow]revision produced no EDL — keeping the original[/yellow]")
+    return result
 
 
 def _run_fanout_task(
@@ -333,18 +375,21 @@ def highlights(
     steer: bool = typer.Option(
         False, "--steer", help="type guidance + Enter to redirect the editor mid-run"
     ),
+    verify: bool = typer.Option(
+        False, "--verify", help="fresh-eyes critic reviews the EDL; one revision round"
+    ),
 ) -> None:
     """Find and render the n best moments as clips with burned captions."""
     from cutroom.agent.prompts import task_highlights
 
     if fanout:
-        if steer:
-            err.print("--steer works with a single editor, not --fanout scouts")
+        if steer or verify:
+            err.print("--steer/--verify work with a single editor, not --fanout scouts")
             raise typer.Exit(1)
         _run_fanout_task(video, n, vertical, budget, model, plan_only=plan)
     else:
         _run_edit_task(video, task_highlights(n, vertical), budget, model,
-                       plan_only=plan, steer=steer)
+                       plan_only=plan, steer=steer, verify=verify)
 
 
 @app.command("recipes")
@@ -379,6 +424,9 @@ def recipe(
     steer: bool = typer.Option(
         False, "--steer", help="type guidance + Enter to redirect the editor mid-run"
     ),
+    verify: bool = typer.Option(
+        False, "--verify", help="fresh-eyes critic reviews the EDL; one revision round"
+    ),
 ) -> None:
     """Run a named editing recipe (e.g. `cutroom recipe podcast-shorts <video>`)."""
     from cutroom.recipes import get_recipe, recipe_names
@@ -390,7 +438,7 @@ def recipe(
         raise typer.Exit(1)
     _run_edit_task(
         video, rec.task_prompt(n_override=n), budget or rec.budget, model,
-        reel=rec.reel, plan_only=plan, steer=steer,
+        reel=rec.reel, plan_only=plan, steer=steer, verify=verify,
     )
 
 
@@ -459,12 +507,16 @@ def cut(
     steer: bool = typer.Option(
         False, "--steer", help="type guidance + Enter to redirect the editor mid-run"
     ),
+    verify: bool = typer.Option(
+        False, "--verify", help="fresh-eyes critic reviews the EDL; one revision round"
+    ),
 ) -> None:
     """Free-form edit instruction → EDL → rendered clips (+ one concatenated reel)."""
     from cutroom.agent.prompts import task_cut
 
     _run_edit_task(video, task_cut(instruction, vertical), budget, model,
-                   reel=True, plan_only=plan, resume=resume, fork=fork, steer=steer)
+                   reel=True, plan_only=plan, resume=resume, fork=fork,
+                   steer=steer, verify=verify)
 
 
 @app.command()

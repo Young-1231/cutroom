@@ -9,13 +9,21 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-1. **无标准机制、需自研（剩余）**：verification/self-critique 回合、observability/trace
-   升级（trail.jsonl 已是雏形）。（steering 已落，见已完成）
+1. **无标准机制、需自研（剩余）**：observability/trace 升级（trail.jsonl 已是雏形）。
+   （steering、verification 已落，见已完成）
 3. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
 4. **Checkpoint 升级**（等 resume/fork 用例沉淀）：Cline 三粒度 restore（EDL / 会话 / 两者），
    checkpoint 与 session 记录已互通 id，机制就绪。
 
 ## 已完成
+
+- Verification/self-critique 回合（2026-06-12，自研机制 #2）：166 离线测试（+10）+ 真实
+  e2e。`--verify`：EDL 落地后开**全新上下文** critic 会话（fresh eyes 而非窗口内自评，
+  role="critic" 工具面没有 propose_edl/mark_moment/load_recipe，只能查证据），逐刀读
+  边界转写 + 看刀内帧，经新工具 submit_review 提交结构化裁决（free、可在预算耗尽后
+  finalize）；有 flag → 恰一轮修订，resume 回编辑器会话（receipts 延续），修订失败保
+  原 EDL。真实验证：critic 13→4 轮查证后 "verify ✓ all 1 cuts confirmed"，理由具体到
+  段边界与帧时间戳。flagged→修订→保底三路径离线覆盖。
 
 - 中途 steering + 工具调用进度行（2026-06-12，自研机制 #1）：156 离线测试（+6）+ 真实
   e2e。自研设计（调研确认无工业标准可抄）：`--steer` 下 stdin 每行 → client.interrupt()
