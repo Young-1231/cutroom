@@ -6,8 +6,10 @@ snapshots are plain JSON files and diffs are computed cut-aware (moved/trimmed/a
 removed cuts) instead of line-based. Restore never destroys state — the current
 edl.json is checkpointed first, so a restore is itself undoable.
 
-Granularity note: Cline-style "restore task as well" needs persistent sessions;
-until JSONL resume/fork lands, restore means the EDL file only.
+Granularity (Cline-style): `cutroom restore --scope edl|session|both`. EDL restores
+rewrite renders/edl.json; session restores re-open the recorded conversation via
+resume/fork (sessions are append-only, so "restore" means continuing from the
+session's end — for agent checkpoints that is moments after the EDL was accepted).
 """
 
 from __future__ import annotations

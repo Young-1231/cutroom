@@ -9,12 +9,19 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-1. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
-2. **Checkpoint 升级**：Cline 三粒度 restore（EDL / 会话 / 两者），
-   checkpoint 与 session 记录已互通 id，机制就绪。
-（"无标准机制、需自研"三项 steering/verification/observability 已全部落地，见已完成）
+1. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI（脚本进行中）。
+（"无标准机制、需自研"三项与 Checkpoint 升级均已落地，见已完成）
 
 ## 已完成
+
+- Checkpoint 三粒度 restore（2026-06-12，范式吸收 #2 收尾）：184 离线测试（+4）+ 真实
+  验证。`cutroom restore --scope edl|session|both`：EDL 粒度即原行为（pre-restore 快照
+  保证可撤销）；session 粒度经 checkpoint 记录的 session id（resolve 验证存在）给出
+  resume/fork 句柄——SDK 会话 append-only，"恢复会话"=从会话末尾续/分叉（agent
+  checkpoint 的会话末尾≈EDL 接受时刻，docstring 诚实记录该近似）；both 二者兼做。
+  非 agent 来源（plan/render/pre-restore）的 checkpoint 申请 session 粒度 → 友好报错。
+  真实验证：--scope both 恢复 cp_0013 并给出当时 steering 会话句柄；plan checkpoint 走
+  session 粒度正确拒绝。
 
 - Observability：`cutroom trail` CLI（2026-06-12，自研机制 #3，"无标准机制"三连收官）：
   173 离线测试（+7）+ 真实数据验证。trail.py 解析聚合（损坏行跳过不致命；fan-out 多

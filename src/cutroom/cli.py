@@ -278,12 +278,18 @@ def log(
 
 
 @app.command("list")
-def list_videos() -> None:
+def list_videos(
+    ids: bool = typer.Option(False, "--ids", help="bare video ids, one per line (for scripts)"),
+) -> None:
     """Logged videos."""
     from cutroom.index.map import fmt_ts
 
     ws = _ws()
     videos = ws.list_videos()
+    if ids:
+        for v in videos:
+            print(v.id)
+        return
     if not videos:
         console.print("nothing logged yet — try `cutroom log <url-or-file>`")
         return
@@ -664,17 +670,53 @@ def checkpoints(
 
 @app.command()
 @friendly
-def restore(video: str, checkpoint: str) -> None:
-    """Restore renders/edl.json to a checkpoint (current state is checkpointed first)."""
-    from cutroom.checkpoints import restore_checkpoint
+def restore(
+    video: str,
+    checkpoint: str,
+    scope: str = typer.Option(
+        "edl", "--scope",
+        help="what to restore: edl (the file) | session (the conversation) | both",
+    ),
+) -> None:
+    """Restore a checkpoint — the EDL file, the agent session that made it, or both.
 
+    EDL restores checkpoint the current state first, so they are undoable. Session
+    restore re-opens the conversation that produced the checkpoint via resume/fork.
+    """
+    from cutroom.checkpoints import load_checkpoint, restore_checkpoint
+
+    if scope not in ("edl", "session", "both"):
+        err.print(f"--scope must be edl, session, or both (got {scope!r})")
+        raise typer.Exit(1)
     ws = _ws()
     meta = _resolve(ws, video)
-    pre_id, edl_path = restore_checkpoint(ws, meta.id, checkpoint)
-    console.print(f"[bold green]restored[/bold green] {checkpoint} -> {edl_path}")
-    if pre_id:
-        console.print(f"previous state saved as [bold]{pre_id}[/bold] (restore is undoable)")
-    console.print(f"[dim]render it with:  cutroom render {meta.id}[/dim]")
+    rec = load_checkpoint(ws, meta.id, checkpoint)
+    sid = ""
+    if scope in ("session", "both"):
+        from cutroom.sessions import resolve_session
+
+        sid = rec.get("session", "")
+        if not sid:
+            err.print(
+                f"{checkpoint} was saved from {rec.get('source', '?')!r}, not an agent"
+                " session — there is no conversation to restore (try --scope edl)"
+            )
+            raise typer.Exit(1)
+        sid = resolve_session(ws, meta.id, sid)  # verify it is a known session
+    if scope in ("edl", "both"):
+        pre_id, edl_path = restore_checkpoint(ws, meta.id, checkpoint)
+        console.print(f"[bold green]restored[/bold green] {checkpoint} -> {edl_path}")
+        if pre_id:
+            console.print(
+                f"previous state saved as [bold]{pre_id}[/bold] (restore is undoable)"
+            )
+        console.print(f"[dim]render it with:  cutroom render {meta.id}[/dim]")
+    if sid:
+        console.print(
+            f"session [bold]{sid[:8]}[/bold] made this checkpoint — re-open it with:"
+            f"\n  continue:  cutroom cut {meta.id} \"...\" --resume {sid[:8]}"
+            f"\n  branch:    cutroom cut {meta.id} \"...\" --fork {sid[:8]}"
+        )
 
 
 def _summarize_scenes(ws: Workspace, video_id: str) -> None:

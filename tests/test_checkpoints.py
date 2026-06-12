@@ -161,6 +161,44 @@ def test_cli_checkpoints_and_restore(monkeypatch, seeded_ws):
     assert "no checkpoint" in out.output
 
 
+def test_cli_restore_scope_session_and_both(monkeypatch, seeded_ws):
+    from cutroom.sessions import record_session
+
+    monkeypatch.setenv("CUTROOM_HOME", str(seeded_ws.home))
+    sid = "abcd1234-5678-90ab-cdef-aabbccddeeff"
+    record_session(seeded_ws, VID, session_id=sid, task="teaser", turns=9,
+                   spent=9000, ok=True, edl=True)
+    save_checkpoint(seeded_ws, VID, EDL_A, "agent", session=sid)
+    runner = CliRunner()
+
+    # session scope: conversation handle comes back, edl.json untouched
+    out = runner.invoke(app, ["restore", VID, "cp_0001", "--scope", "session"])
+    assert out.exit_code == 0, out.output
+    assert f"--resume {sid[:8]}" in out.output and f"--fork {sid[:8]}" in out.output
+    assert not (seeded_ws.renders_dir(VID) / "edl.json").exists()
+
+    # both: file restored AND handle printed
+    out = runner.invoke(app, ["restore", VID, "cp_0001", "--scope", "both"])
+    assert out.exit_code == 0, out.output
+    assert "restored" in out.output and f"--resume {sid[:8]}" in out.output
+    assert json.loads((seeded_ws.renders_dir(VID) / "edl.json").read_text()) == EDL_A
+
+
+def test_cli_restore_scope_session_needs_agent_checkpoint(monkeypatch, seeded_ws):
+    monkeypatch.setenv("CUTROOM_HOME", str(seeded_ws.home))
+    save_checkpoint(seeded_ws, VID, EDL_A, "render")  # human edit — no session
+    out = CliRunner().invoke(app, ["restore", VID, "cp_0001", "--scope", "session"])
+    assert out.exit_code == 1
+    assert "no conversation" in out.output
+
+
+def test_cli_restore_scope_validates(monkeypatch, seeded_ws):
+    monkeypatch.setenv("CUTROOM_HOME", str(seeded_ws.home))
+    out = CliRunner().invoke(app, ["restore", VID, "cp_0001", "--scope", "everything"])
+    assert out.exit_code == 1
+    assert "--scope must be" in out.output
+
+
 def test_cli_checkpoints_empty(monkeypatch, seeded_ws):
     monkeypatch.setenv("CUTROOM_HOME", str(seeded_ws.home))
     out = CliRunner().invoke(app, ["checkpoints", VID])
