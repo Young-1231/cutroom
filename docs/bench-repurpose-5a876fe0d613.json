@@ -1,0 +1,72 @@
+{
+  "video": "5a876fe0d613",
+  "title": "demo",
+  "duration": 555.388722,
+  "ran": "2026-06-12T04:36:06+00:00",
+  "tasks": [
+    {
+      "task": "teaser-30s",
+      "score": {
+        "ok": true,
+        "produced": true,
+        "checks": {
+          "duration": true,
+          "receipts": true,
+          "boundaries": true
+        },
+        "n_cuts": 3,
+        "total_secs": 31.2,
+        "boundary_max": 0.05,
+        "boundary_p50": 0.025
+      },
+      "spent": 12146,
+      "turns": 22,
+      "wall_secs": 154.0,
+      "session": "290b4eaf-80a1-4299-af93-8c2ab269a77d",
+      "editor_ok": true
+    },
+    {
+      "task": "highlights-3",
+      "score": {
+        "ok": true,
+        "produced": true,
+        "checks": {
+          "n_cuts": true,
+          "cut_lengths": true,
+          "receipts": true,
+          "boundaries": true
+        },
+        "n_cuts": 3,
+        "total_secs": 98.7,
+        "boundary_max": 0.04,
+        "boundary_p50": 0.024
+      },
+      "spent": 20696,
+      "turns": 18,
+      "wall_secs": 129.8,
+      "session": "04a5a769-25fb-4ac4-b5ad-d7c68b2db658",
+      "editor_ok": true
+    },
+    {
+      "task": "vertical-short-20s",
+      "score": {
+        "ok": true,
+        "produced": true,
+        "checks": {
+          "duration": true,
+          "receipts": true,
+          "boundaries": true
+        },
+        "n_cuts": 1,
+        "total_secs": 22.0,
+        "boundary_max": 0.03,
+        "boundary_p50": 0.02
+      },
+      "spent": 14935,
+      "turns": 16,
+      "wall_secs": 134.7,
+      "session": "938b144c-2789-436b-9a28-c2d7fb2a4c31",
+      "editor_ok": true
+    }
+  ]
+}

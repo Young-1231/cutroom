@@ -1,0 +1,25 @@
+[
+  {
+    "name": "teaser-30s",
+    "instruction": "make one ~30 second teaser that hooks the viewer and ends on a cliffhanger, without spoiling the ending",
+    "target_secs": 30,
+    "tolerance": 0.25,
+    "budget": 90000
+  },
+  {
+    "name": "highlights-3",
+    "instruction": "the three strongest self-contained moments",
+    "n_cuts": 3,
+    "min_cut": 8,
+    "max_cut": 45,
+    "budget": 90000
+  },
+  {
+    "name": "vertical-short-20s",
+    "instruction": "one ~20 second vertical short of the single most striking sequence",
+    "target_secs": 20,
+    "tolerance": 0.25,
+    "vertical": true,
+    "budget": 90000
+  }
+]

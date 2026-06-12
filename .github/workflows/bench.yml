@@ -1,0 +1,43 @@
+name: bench
+
+# Manual-only: real agent runs cost real tokens. Needs the ANTHROPIC_API_KEY secret.
+# Downloads a public-domain film, logs it (CPU whisper), runs the repurpose
+# scorecard, and publishes the table to the run's step summary + an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "video to bench against"
+        default: "https://archive.org/download/DuckandC1951/DuckandC1951_512kb.mp4"
+      whisper_model:
+        description: "faster-whisper model size"
+        default: "small"
+
+jobs:
+  repurpose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface
+          key: hf-whisper-${{ inputs.whisper_model }}-${{ runner.os }}
+      - name: Install ffmpeg + yt-dlp
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg && uv tool install yt-dlp
+      - run: uv sync
+      - name: Log the footage
+        run: uv run cutroom log "${{ inputs.video_url }}" --whisper-model "${{ inputs.whisper_model }}"
+      - name: Run the repurpose scorecard
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          VID=$(uv run cutroom list --ids | head -1)
+          uv run python scripts/bench_repurpose.py "$VID"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-repurpose
+          path: docs/bench-repurpose-*.json

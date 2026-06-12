@@ -9,10 +9,18 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-1. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI（脚本进行中）。
-（"无标准机制、需自研"三项与 Checkpoint 升级均已落地，见已完成）
+（2026-06 范式吸收 backlog 已全部清空：Bundle 三件、自研三件、M2 跑分、Checkpoint
+升级均落地，见已完成。下一步进入发布产品化。）
 
 ## 已完成
+
+- M2 Repurpose 跑分 + CI（2026-06-12）：184 离线测试（bench +8）+ 真实跑分。cutroom.bench
+  只测机械可证伪项（EDL 产出 / 时长±tol / 刀数 / receipts 全覆盖 / 剪点距自然边界
+  ≤0.5s），明确不做 LLM 评审（docstring 写明边界）；bench/repurpose.json 3 任务规格；
+  scripts/bench_repurpose.py 出 markdown 表 + docs/bench-*.json + GITHUB_STEP_SUMMARY；
+  bench.yml workflow_dispatch（下载公有领域影片 → log → 跑分 → artifact，需
+  ANTHROPIC_API_KEY secret）；`cutroom list --ids` 供脚本取 id。真实跑分：demo 影片
+  3/3 全过（12-21k chars / 16-22 轮），表格进 README。
 
 - Checkpoint 三粒度 restore（2026-06-12，范式吸收 #2 收尾）：184 离线测试（+4）+ 真实
   验证。`cutroom restore --scope edl|session|both`：EDL 粒度即原行为（pre-restore 快照

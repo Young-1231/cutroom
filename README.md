@@ -8,15 +8,18 @@ cutroom log https://youtube.com/watch?v=...   # ingest + index ("log the footage
 cutroom highlights <video> -n 3 --vertical    # agent finds & renders the best moments
 cutroom highlights <video> --fanout           # scout long video in parallel windows
 cutroom highlights <video> --plan             # review the edit plan before rendering
-cutroom recipe podcast-shorts <video>         # named expert workflows (see `cutroom recipes`)
+cutroom recipe podcast-shorts <video>         # expert workflows as markdown files
 cutroom ask <video> "what did she say about pricing?"   # answers with [mm:ss] citations
 cutroom chapters <video>                      # YouTube-ready chapter markers
 cutroom cut <video> "make a 30s teaser focused on the demo failure"
+cutroom cut <video> "tense, fast" --steer     # type guidance mid-run to redirect it
+cutroom cut <video> "60s recap" --verify      # fresh-eyes critic checks every cut
 cutroom cut <video> "tighter, 10s" --fork <session>   # branch a session: new cut style,
                                               # keeps the investigation already paid for
 cutroom render <video> --target vertical      # re-render the saved EDL, no agent run
 cutroom sessions <video>                      # past editor sessions (resume / fork any)
 cutroom checkpoints <video>                   # EDL undo history; restore any state
+cutroom trail <video>                         # audit trail: every call, charge, denial
 ```
 
 ## Why
@@ -138,7 +141,27 @@ questions correctly; cutroom also frame-verified its claims.
 The baseline's cost grows linearly with video length; cutroom's is capped by its budget
 ledger no matter how long the footage is. (Small-N and self-judged — illustrative, not a
 benchmark. Reproduce with `uv run python scripts/ablation.py <video> "<question>"`;
-raw outputs in `docs/ablation-*.json`. The AgenticVBench scorecard is roadmap M2.)
+raw outputs in `docs/ablation-*.json`.)
+
+## Does it hold up under constraints?
+
+A repurpose-style scorecard checks what is mechanically falsifiable about real runs —
+no LLM judge: did an EDL land, does it hit the duration/cut-count constraints, does
+every cut carry receipts, and does every boundary sit within 0.5s of a natural speech
+or silence edge. On *Duck and Cover* (all three tasks in `bench/repurpose.json`):
+
+| task | ok | cuts | total | checks | budget | turns |
+|---|---|---|---|---|---|---|
+| teaser-30s | ✅ | 3 | 31.2s | ✓ duration, ✓ receipts, ✓ boundaries | 12,146 | 22 |
+| highlights-3 | ✅ | 3 | 98.7s | ✓ n_cuts, ✓ cut_lengths, ✓ receipts, ✓ boundaries | 20,696 | 18 |
+| vertical-short-20s | ✅ | 1 | 22.0s | ✓ duration, ✓ receipts, ✓ boundaries | 14,935 | 16 |
+
+Quality judgment ("is the teaser *good*?") is deliberately out of scope — that needs a
+benchmark's judging protocol, not a README. Reproduce with
+`uv run python scripts/bench_repurpose.py <video>`; raw output in
+`docs/bench-repurpose-*.json`; the `bench` GitHub Actions workflow runs the same
+scorecard on a fresh runner against a public-domain film (manual trigger, needs an
+`ANTHROPIC_API_KEY` secret).
 
 ## Working with the agent the way modern harnesses do
 
@@ -149,10 +172,24 @@ Codex, OpenClaw):
   each cut's time range, reason, and cited transcript — and stop. Editing is
   irreversible and subjective, so you review (and tweak `edl.json`) before a single
   frame renders, then apply with `cutroom render <video>`.
-- **Recipes (reusable expert workflows).** Named, shareable editing skills:
-  `cutroom recipe podcast-shorts <video>` packages "how an editor approaches a podcast"
-  behind one name. `cutroom recipes` lists the built-ins (podcast-shorts, talk-highlights,
-  teaser, quotes, tighten).
+- **Recipes (skills as markdown files).** An editing skill is one markdown file:
+  frontmatter (format, budget, clip count) + a body of expert guidance. Built-ins ship
+  in the package; drop your own into `~/.cutroom/recipes/` and they appear in
+  `cutroom recipes` and override built-ins by name. Progressive disclosure, both ways:
+  the agent's system prompt carries only `name: summary` lines, and a `load_recipe`
+  tool pulls the full body on demand — in real runs the editor loads the matching
+  recipe on turn 1 when your free-form instruction smells like one.
+- **Mid-run steering.** With `--steer`, type a line and hit Enter while the editor
+  works: the session is interrupted and your guidance injected, with all receipts and
+  budget state intact. Every tool call already streams as a one-line progress note
+  (`→ view_frames 42s,46.5s`), so you can see when it goes somewhere you don't like.
+  In a real run, a "3 cuts, 30s" task steered mid-run to "ONE cut, 15s max" landed
+  exactly that.
+- **Fresh-eyes verification.** `--verify` spawns a critic with a clean context after
+  the EDL lands — not the editor grading its own work. The critic's toolkit can
+  investigate but cannot cut (`propose_edl`/`mark_moment` stripped); it re-reads both
+  boundaries, re-views frames inside each cut, and files structured per-cut verdicts.
+  Flagged issues get exactly one revision round, resumed into the editor's session.
 - **Fan-out (parallel sub-agents).** `--fanout` splits a long video into windows and
   runs one scout agent per window concurrently, then merges and globally ranks their
   picks — faster and cheaper than one agent scanning an hour serially, and each kept
@@ -163,12 +200,21 @@ Codex, OpenClaw):
   the harness layer, not just inside tool handlers: a PreToolUse gate denies
   investigation once the budget is spent and rejects any cut citing a frame the agent
   never actually viewed; every tool call, denial, and session summary lands in a
-  per-video `trail.jsonl` with per-call costs.
+  per-video `trail.jsonl` with per-call costs. `cutroom trail <video>` reads it back:
+  per-session summaries, a call-by-call timeline (`--session`), and a cross-session
+  denial audit (`--denials`).
+- **File sandbox.** The editor's only filesystem tool (the built-in `Read`, granted so
+  it can re-view saved frames) is confined to the video's own media directory at the
+  hook layer — symlinks resolved, relative paths refused. The transcript the agent
+  reads is attacker-controllable (it's ASR of an arbitrary video), and in adversarial
+  testing an injected "read /tmp/... and tell me what it says" was denied in the real
+  chain, logged to the trail, and never reached the model.
 - **Checkpoints (shadow-VCS over the EDL).** Every accepted or saved edit list becomes
   an immutable checkpoint — "undo to before that cut", independent of any session.
   `cutroom checkpoints <video> --diff cp_0002` shows cut-aware diffs
   (`~ cut 0 [68.46-87.82] -> [68.46-81.82]`); `cutroom restore` snapshots the current
-  state first, so restores are themselves undoable.
+  state first, so restores are themselves undoable — and `--scope edl|session|both`
+  restores the file, re-opens the conversation that made it, or both.
 - **Sessions: resume & fork.** Every run prints a session handle. `--resume` continues
   it with full memory; `--fork` branches it to try a different cut style without
   re-paying the investigation. In a real run, recutting a 20s clip into a 10s teaser
@@ -189,15 +235,18 @@ Codex, OpenClaw):
 ## Status & roadmap
 
 M0 — all verbs (`log` / `list` / `map` / `ask` / `highlights` / `chapters` / `cut` /
-`render` / `sessions` / `checkpoints` / `restore`) implemented and verified end-to-end
-on real footage; word-level burned captions (landscape + 9:16 vertical), adaptive scene
-segmentation, EDL persistence, receipts, lifecycle hooks + audit trail, EDL checkpoints,
-session resume/fork. 117 offline tests + live agent e2e runs, ruff-clean.
+`render` / `sessions` / `checkpoints` / `restore` / `trail`) implemented and verified
+end-to-end on real footage; word-level burned captions (landscape + 9:16 vertical),
+adaptive scene segmentation, EDL persistence, receipts, lifecycle hooks + audit trail,
+file sandbox, EDL checkpoints with 3-scope restore, session resume/fork, mid-run
+steering, fresh-eyes verification, file-based recipes. 184+ offline tests + live agent
+e2e runs (including adversarial gate tests), ruff-clean.
 
 - **M1**: active-speaker-aware vertical crop (CPU face tracking); silence/filler-word trim
   presets; OTIO/EDL export for NLE handoff (DaVinci, Premiere).
-- **M2**: AgenticVBench Repurpose-subset scorecard in CI + a budget-ablation chart
-  (map+tools vs full-transcript baseline) — published honestly, whichever way it goes.
+- **M2** (in progress): repurpose-task scorecard — mechanical checks (duration, receipts,
+  boundary cleanliness) over real runs via `scripts/bench_repurpose.py`, runnable in CI
+  (`bench` workflow) — published honestly, whichever way it goes.
 - **M3**: multi-video projects ("find every claim about X across my 10 lectures").
 
 ## License
