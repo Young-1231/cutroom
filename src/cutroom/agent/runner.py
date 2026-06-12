@@ -128,6 +128,9 @@ async def run_editor(
             on_edl_accepted=lambda edl, session: save_checkpoint(
                 ws, video_id, edl, "agent", session
             ),
+            # File sandbox: Read (granted for re-viewing saved frames) is confined
+            # to this video's media directory — see make_lifecycle_hooks.
+            read_roots=[ws.media_dir(video_id)],
         ),
         max_turns=max_turns,
         # SDK isolation: never inherit the host user's settings or CLAUDE.md files —

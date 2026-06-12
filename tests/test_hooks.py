@@ -136,6 +136,60 @@ def test_failure_and_stop_records(env):
     assert all("ts" in r for r in recs)
 
 
+@pytest.fixture
+def sandboxed(tmp_path):
+    root = tmp_path / "media" / "vid"
+    root.mkdir(parents=True)
+    trail = tmp_path / "trail.jsonl"
+    hooks = make_lifecycle_hooks(
+        Ledger(10_000), {"viewed_frames": []}, trail, read_roots=[root]
+    )
+    gate = hooks["PreToolUse"][0].hooks[0]
+    return {"root": root, "trail": trail, "gate": gate}
+
+
+def read(path):
+    return pre("Read", {"file_path": str(path)})
+
+
+def test_read_sandbox_allows_inside_root(sandboxed):
+    frame = sandboxed["root"] / "frames" / "f000010.000.jpg"
+    assert call(sandboxed["gate"], read(frame)) == {}
+
+
+def test_read_sandbox_denies_outside_root(sandboxed, tmp_path):
+    for path in (tmp_path / "secrets.txt", "/etc/passwd", "/Users/someone/.ssh/id_rsa"):
+        result = call(sandboxed["gate"], read(path))
+        assert decision(result) == "deny"
+        assert "file sandbox" in result["hookSpecificOutput"]["permissionDecisionReason"]
+    denies = [r for r in trail_records(sandboxed["trail"]) if r["event"] == "deny"]
+    assert len(denies) == 3 and all(d["tool"] == "Read" for d in denies)
+
+
+def test_read_sandbox_denies_symlink_escape(sandboxed, tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret")
+    link = sandboxed["root"] / "innocent.jpg"
+    link.symlink_to(outside)
+    assert decision(call(sandboxed["gate"], read(link))) == "deny"
+
+
+def test_read_sandbox_denies_relative_and_traversal(sandboxed):
+    assert decision(call(sandboxed["gate"], read("frames/f1.jpg"))) == "deny"
+    sneaky = sandboxed["root"] / ".." / ".." / "outside.txt"
+    assert decision(call(sandboxed["gate"], read(sneaky))) == "deny"
+
+
+def test_read_sandbox_defers_malformed_path_to_handler(sandboxed):
+    for tool_input in ({}, {"file_path": ""}, {"file_path": 42}):
+        assert call(sandboxed["gate"], pre("Read", tool_input)) == {}
+
+
+def test_read_unconfined_without_roots(env):
+    # Back-compat: hooks built without read_roots leave Read alone (tests, debugging).
+    assert call(env["PreToolUse"], read("/etc/passwd")) == {}
+
+
 def test_runner_uses_denied_builtins():
     from cutroom.agent import runner
 

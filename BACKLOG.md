@@ -9,15 +9,22 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-1. **Bundle（剩余）**：seatbelt 文件 allowlist sandbox（~3-5d）。
-   （AGENTS.md 已落 2026-06-12；recipes → Skills 已落，见已完成）
-2. **无标准机制、需自研**（调研未找到可抄的工业标准）：中途 steering/打断、verification/
+1. **无标准机制、需自研**（调研未找到可抄的工业标准）：中途 steering/打断、verification/
    self-critique 回合、observability/trace（trail.jsonl 已是雏形）。是真实缺口但要自己设计。
 3. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
 4. **Checkpoint 升级**（等 resume/fork 用例沉淀）：Cline 三粒度 restore（EDL / 会话 / 两者），
    checkpoint 与 session 记录已互通 id，机制就绪。
 
 ## 已完成
+
+- 文件 allowlist sandbox（2026-06-12，范式吸收 #5b，Bundle 收官）：150 离线测试（+6）
+  + 对抗性真实 e2e。结论：SDK 的 OS 级 sandbox 只罩 Bash（cutroom 已三层拒绝 Bash），
+  对本工具面无增益且 Linux 依赖 bubblewrap 有破坏风险 → 正确落点是 hooks 层：
+  PreToolUse 给内置 Read（编辑器唯一碰文件系统的工具）加路径白名单，只许读本视频
+  media 目录；symlink resolve 后判定，相对路径直接拒（进程间 cwd 不一致）。
+  真实验证：诱导 agent 读 /tmp 探针文件 → 真实链路 deny + trail 记录 + 会话优雅继续，
+  秘密未泄露。这补上了间接注入经 Read 外读任意主机文件的最后一条路。
+2026-06-12 范式吸收 Bundle（#5）至此全部落地：AGENTS.md / recipes→Skills / 文件沙箱。
 
 - Recipes → Skills progressive disclosure（2026-06-12，范式吸收 #5a）：144 离线测试（+15）
   + 真实 e2e。recipe 变成 SKILL.md 式文件（frontmatter: summary/vertical/reel/budget/n，

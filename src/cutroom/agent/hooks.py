@@ -6,7 +6,8 @@ session-wide invariants into the harness lifecycle, where no handler can skip th
 
 - PreToolUse  : deny side-effecting built-ins (3rd layer after disallowed_tools and
                 can_use_tool), deny investigation tools once the budget is exhausted,
-                and deny finalize calls that cite frames never actually viewed.
+                deny finalize calls that cite frames never actually viewed, and
+                confine the built-in Read to a file allowlist (read_roots).
 - PostToolUse : append every tool call to a per-video trail.jsonl with its budget
                 charge — the persistent ledger, and the mount point for shadow-VCS
                 checkpoints (commit-after-edit hangs off the edl_accepted record).
@@ -91,6 +92,7 @@ def make_lifecycle_hooks(
     registry: dict,
     trail_path: Path,
     on_edl_accepted: Callable[[dict[str, Any], str], str | None] | None = None,
+    read_roots: list[Path] | None = None,
 ) -> dict[str, list[HookMatcher]]:
     """Hooks bound to one editor session's ledger + evidence registry + trail file.
 
@@ -100,12 +102,44 @@ def make_lifecycle_hooks(
     on_edl_accepted(edl_dict, session_id) fires from PostToolUse whenever propose_edl
     lands an EDL — the shadow-VCS checkpoint mount point; its return value (checkpoint
     id) is written into the trail record.
+
+    read_roots is the file sandbox: the built-in Read (the editor's only fs-touching
+    tool, granted so it can re-view saved frames) is denied outside these directories.
+    The transcript Read operates on is attacker-controllable, so without this an
+    injected instruction could exfiltrate any host file the user can read. Symlinks
+    are resolved before the containment check. (The SDK's OS-level sandbox only
+    confines Bash commands — and Bash is already denied outright — so this gate IS
+    the filesystem boundary for this tool surface.)
     """
     state = {"spent": 0}  # last seen ledger.spent, for per-call charge attribution
+    roots = [r.resolve() for r in (read_roots or [])]
+
+    def _read_deny_reason(args: dict[str, Any]) -> str | None:
+        raw = args.get("file_path")
+        if not isinstance(raw, str) or not raw:
+            return None  # malformed input is the handler's error to report
+        path = Path(raw)
+        if not path.is_absolute():
+            # The hook resolves paths in cutroom's process; the tool would resolve
+            # them in the CLI's. Refusing relative paths keeps the two consistent.
+            return f"file sandbox: use an absolute path (got {raw!r})"
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return f"file sandbox: cannot resolve {raw!r}"
+        if not any(resolved.is_relative_to(root) for root in roots):
+            return (
+                f"file sandbox: {raw} is outside this video's media directory —"
+                " the editor may only Read saved frames under "
+                + " or ".join(str(r) for r in roots)
+            )
+        return None
 
     def _deny_reason(tool: str, args: dict[str, Any]) -> str | None:
         if tool in DENIED_BUILTINS:
             return f"{tool} is not available to the cutroom editor"
+        if tool == "Read" and roots:
+            return _read_deny_reason(args)
         if tool in INVESTIGATION_TOOLS and ledger.exhausted:
             return EXHAUSTED_MSG
         unviewed = [
