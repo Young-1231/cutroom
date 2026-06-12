@@ -3,6 +3,11 @@
 **A film-editor agent that logs your footage before it cuts.**
 Local-first · GPU-free · every cut ships with receipts.
 
+[![CI](https://github.com/Young-1231/cutroom/actions/workflows/ci.yml/badge.svg)](https://github.com/Young-1231/cutroom/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Young-1231/cutroom)](https://github.com/Young-1231/cutroom/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
+
 ![cutroom demo — a real run at 3.5× speed](docs/demo.gif)
 
 ```
