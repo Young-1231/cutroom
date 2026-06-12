@@ -120,7 +120,7 @@ def test_cli_ask_passes_resolved_session_to_runner(monkeypatch, seeded_ws):
     add(seeded_ws, S1)
     seen = {}
 
-    def fake(ws, vid, prompt, budget_chars=0, model=None, resume=None, fork=False):
+    def fake(ws, vid, prompt, budget_chars=0, model=None, resume=None, fork=False, **kw):
         seen.update(resume=resume, fork=fork)
         return runner_mod.EditorResult("answer", None, [], 100, 2, session_id=S2)
 

@@ -130,7 +130,7 @@ def test_recipe_wires_config_into_edit_task(monkeypatch, seeded_ws):
 
     captured = {}
 
-    def fake_run_edit_task(ref, prompt, budget, model, reel=False, plan_only=False):
+    def fake_run_edit_task(ref, prompt, budget, model, reel=False, plan_only=False, **kw):
         captured.update(ref=ref, prompt=prompt, budget=budget, reel=reel, plan_only=plan_only)
 
     monkeypatch.setattr(cli, "_run_edit_task", fake_run_edit_task)

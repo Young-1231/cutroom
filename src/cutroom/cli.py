@@ -79,10 +79,14 @@ def _session_args(ws, video_id: str, resume: str | None, fork: str | None):
     return resolve_session(ws, video_id, resume or fork), bool(fork)
 
 
+def _progress(line: str) -> None:
+    console.print(line, style="dim", markup=False, highlight=False)
+
+
 def _run_edit_task(
     ref: str, task_prompt: str, budget: int, model: str | None,
     reel: bool = False, plan_only: bool = False,
-    resume: str | None = None, fork: str | None = None,
+    resume: str | None = None, fork: str | None = None, steer: bool = False,
 ) -> None:
     """Single-agent edit: run the editor, then apply its result (plan or render)."""
     from cutroom.agent.runner import run_editor_sync
@@ -91,8 +95,11 @@ def _run_edit_task(
     meta = _resolve(ws, ref)
     sid, forked = _session_args(ws, meta.id, resume, fork)
     console.print(f"[dim]editing {meta.title or meta.id} — budget {budget:,} chars[/dim]")
+    if steer:
+        console.print("[dim]steering on — type guidance + Enter to redirect mid-run[/dim]")
     result = run_editor_sync(
-        ws, meta.id, task_prompt, budget_chars=budget, model=model, resume=sid, fork=forked
+        ws, meta.id, task_prompt, budget_chars=budget, model=model, resume=sid, fork=forked,
+        steer=steer, on_progress=_progress,
     )
     _apply_result(ws, meta, result, reel=reel, plan_only=plan_only)
 
@@ -268,6 +275,9 @@ def ask(
     fork: str | None = typer.Option(
         None, "--fork", metavar="SESSION", help="branch a previous session into a new one"
     ),
+    steer: bool = typer.Option(
+        False, "--steer", help="type guidance + Enter to redirect the editor mid-run"
+    ),
 ) -> None:
     """Answer a question about the video with [mm:ss] citations."""
     from cutroom.agent.prompts import task_ask
@@ -276,9 +286,11 @@ def ask(
     ws = _ws()
     meta = _resolve(ws, video)
     sid, forked = _session_args(ws, meta.id, resume, fork)
+    if steer:
+        console.print("[dim]steering on — type guidance + Enter to redirect mid-run[/dim]")
     result = run_editor_sync(
         ws, meta.id, task_ask(question), budget_chars=budget, model=model,
-        resume=sid, fork=forked,
+        resume=sid, fork=forked, steer=steer, on_progress=_progress,
     )
     _say(result.final_text)
     if not result.ok:
@@ -318,14 +330,21 @@ def highlights(
     ),
     budget: int = typer.Option(120_000),
     model: str | None = typer.Option(None),
+    steer: bool = typer.Option(
+        False, "--steer", help="type guidance + Enter to redirect the editor mid-run"
+    ),
 ) -> None:
     """Find and render the n best moments as clips with burned captions."""
     from cutroom.agent.prompts import task_highlights
 
     if fanout:
+        if steer:
+            err.print("--steer works with a single editor, not --fanout scouts")
+            raise typer.Exit(1)
         _run_fanout_task(video, n, vertical, budget, model, plan_only=plan)
     else:
-        _run_edit_task(video, task_highlights(n, vertical), budget, model, plan_only=plan)
+        _run_edit_task(video, task_highlights(n, vertical), budget, model,
+                       plan_only=plan, steer=steer)
 
 
 @app.command("recipes")
@@ -357,6 +376,9 @@ def recipe(
     plan: bool = typer.Option(False, "--plan", help="review the plan before rendering"),
     budget: int | None = typer.Option(None, help="override the recipe's char budget"),
     model: str | None = typer.Option(None),
+    steer: bool = typer.Option(
+        False, "--steer", help="type guidance + Enter to redirect the editor mid-run"
+    ),
 ) -> None:
     """Run a named editing recipe (e.g. `cutroom recipe podcast-shorts <video>`)."""
     from cutroom.recipes import get_recipe, recipe_names
@@ -368,7 +390,7 @@ def recipe(
         raise typer.Exit(1)
     _run_edit_task(
         video, rec.task_prompt(n_override=n), budget or rec.budget, model,
-        reel=rec.reel, plan_only=plan,
+        reel=rec.reel, plan_only=plan, steer=steer,
     )
 
 
@@ -434,12 +456,15 @@ def cut(
         None, "--fork", metavar="SESSION",
         help="branch a previous session: try a different cut without re-paying investigation",
     ),
+    steer: bool = typer.Option(
+        False, "--steer", help="type guidance + Enter to redirect the editor mid-run"
+    ),
 ) -> None:
     """Free-form edit instruction → EDL → rendered clips (+ one concatenated reel)."""
     from cutroom.agent.prompts import task_cut
 
     _run_edit_task(video, task_cut(instruction, vertical), budget, model,
-                   reel=True, plan_only=plan, resume=resume, fork=fork)
+                   reel=True, plan_only=plan, resume=resume, fork=fork, steer=steer)
 
 
 @app.command()

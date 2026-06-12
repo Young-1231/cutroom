@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
@@ -17,6 +19,7 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
     ToolPermissionContext,
+    ToolUseBlock,
 )
 
 from cutroom.agent.budget import Ledger
@@ -81,6 +84,111 @@ class EditorResult:
     session_id: str = ""  # resume/fork handle (`cutroom sessions`)
 
 
+_STEER_WRAPPER = (
+    "[USER STEERING — guidance injected mid-run]\n{text}\n"
+    "Adjust course accordingly and continue the task. All discipline still applies:"
+    " receipts for every cut, watch the budget, no full-transcript dumps."
+)
+
+
+class StdinSteering:
+    """Mid-run steering: each line typed on stdin interrupts the live session, and the
+    drive loop re-injects it as user guidance. The prompt string is the only channel —
+    same contract as resume/fork, so the receipts state carries through untouched."""
+
+    def __init__(self, client: Any, notify: Callable[[str], None]):
+        self._client = client
+        self._notify = notify
+        self._pending: list[str] = []
+
+    async def run(self) -> None:
+        """Reader task: blocks on stdin lines until cancelled or EOF."""
+        while True:
+            line = await anyio.to_thread.run_sync(
+                sys.stdin.readline, abandon_on_cancel=True
+            )
+            if not line:  # EOF — no steering possible anymore
+                return
+            text = line.strip()
+            if not text:
+                continue
+            self._pending.append(text)
+            self._notify("⏸ steering received — interrupting the editor…")
+            try:
+                await self._client.interrupt()
+            except Exception:  # noqa: BLE001 — session may have just finished; the
+                pass  # pending text still gets injected by the drive loop
+
+
+    def pop(self) -> str | None:
+        return self._pending.pop(0) if self._pending else None
+
+
+def _progress_line(block: ToolUseBlock) -> str:
+    """One compact, human-scannable line per tool call — what steering reacts to."""
+    name = block.name.removeprefix("mcp__cutroom__")
+    args = block.input or {}
+    detail = ""
+    if name == "view_frames":
+        detail = " " + ",".join(f"{t:g}s" for t in args.get("timestamps", [])[:6])
+    elif name == "search_transcript":
+        detail = f" {args.get('query', '')!r}"
+    elif name in ("read_transcript", "probe_audio"):
+        detail = f" {args.get('t0', '?')}–{args.get('t1', '?')}s"
+    elif name == "load_recipe":
+        detail = f" {args.get('name', '')}"
+    elif name in ("mark_moment", "propose_edl"):
+        detail = f" [{args.get('t0', '')}-{args.get('t1', '')}]" if "t0" in args else ""
+    return f"→ {name}{detail}"
+
+
+async def _drive_session(
+    client: Any,
+    task_prompt: str,
+    steering: StdinSteering | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Send the task, stream the response, and re-engage after each user interrupt.
+
+    Returns {final_text, num_turns, session_id, ok, error}. Only the LAST round
+    decides ok/error: an interrupted round is not a failure, it is a redirect.
+    """
+    out: dict[str, Any] = {"final_text": "", "num_turns": 0, "session_id": "",
+                           "ok": True, "error": None}
+    prompt = task_prompt
+    while True:
+        out["ok"], out["error"] = True, None
+        await client.query(prompt)
+        async for msg in client.receive_response():
+            if isinstance(msg, AssistantMessage):
+                texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
+                if texts:
+                    out["final_text"] = "\n".join(texts)
+                if on_progress:
+                    for b in msg.content:
+                        if isinstance(b, ToolUseBlock):
+                            on_progress(_progress_line(b))
+            elif isinstance(msg, ResultMessage):
+                out["num_turns"] += msg.num_turns
+                out["session_id"] = msg.session_id or out["session_id"]
+                if msg.result:
+                    out["final_text"] = msg.result
+                # A non-"success" subtype (error_max_turns, error_during_execution, …)
+                # or is_error means the run did not finish cleanly — surface it instead
+                # of passing a half-finished answer off as complete.
+                if msg.is_error or (msg.subtype and msg.subtype != "success"):
+                    out["ok"] = False
+                    out["error"] = msg.subtype or "error"
+                    if getattr(msg, "api_error_status", None):
+                        out["error"] += f" (api status {msg.api_error_status})"
+        steer_text = steering.pop() if steering else None
+        if steer_text is None:
+            return out
+        if on_progress:
+            on_progress(f"↪ steering the editor: {steer_text}")
+        prompt = _STEER_WRAPPER.format(text=steer_text)
+
+
 async def run_editor(
     ws: Workspace,
     video_id: str,
@@ -92,6 +200,8 @@ async def run_editor(
     resume: str | None = None,
     fork: bool = False,
     role: str = "editor",
+    steer: bool = False,
+    on_progress: Callable[[str], None] | None = None,
 ) -> EditorResult:
     ledger = Ledger(total_chars=budget_chars)
     registry: dict = {}
@@ -142,48 +252,33 @@ async def run_editor(
         resume=resume,
         fork_session=fork,
     )
-    final_text = ""
-    num_turns = 0
-    ok = True
-    error: str | None = None
-    session_id = ""
     async with ClaudeSDKClient(options=options) as client:
-        await client.query(task_prompt)
-        async for msg in client.receive_response():
-            if isinstance(msg, AssistantMessage):
-                texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
-                if texts:
-                    final_text = "\n".join(texts)
-            elif isinstance(msg, ResultMessage):
-                num_turns = msg.num_turns
-                session_id = msg.session_id or ""
-                if msg.result:
-                    final_text = msg.result
-                # A non-"success" subtype (error_max_turns, error_during_execution, …)
-                # or is_error means the run did not finish cleanly — surface it instead
-                # of passing a half-finished answer off as complete.
-                if msg.is_error or (msg.subtype and msg.subtype != "success"):
-                    ok = False
-                    error = msg.subtype or "error"
-                    if getattr(msg, "api_error_status", None):
-                        error += f" (api status {msg.api_error_status})"
+        if steer:
+            async with anyio.create_task_group() as tg:
+                steering = StdinSteering(client, on_progress or (lambda _line: None))
+                tg.start_soon(steering.run)
+                out = await _drive_session(client, task_prompt, steering, on_progress)
+                tg.cancel_scope.cancel()
+        else:
+            out = await _drive_session(client, task_prompt, None, on_progress)
     edl_dict = registry.get("edl")
-    if session_id:
-        save_state(ws, video_id, session_id, list(registry.get("viewed_frames", [])))
+    if out["session_id"]:
+        save_state(ws, video_id, out["session_id"], list(registry.get("viewed_frames", [])))
         record_session(
-            ws, video_id, session_id=session_id, task=task_prompt,
-            turns=num_turns, spent=ledger.spent, ok=ok, edl=edl_dict is not None,
+            ws, video_id, session_id=out["session_id"], task=task_prompt,
+            turns=out["num_turns"], spent=ledger.spent, ok=out["ok"],
+            edl=edl_dict is not None,
             resumed_from=resume or "", forked=fork, role=role,
         )
     return EditorResult(
-        final_text=final_text,
+        final_text=out["final_text"],
         edl=edl_from_dict(edl_dict) if edl_dict else None,
         moments=list(registry.get("moments", [])),
         chars_used=ledger.spent,
-        num_turns=num_turns,
-        ok=ok,
-        error=error,
-        session_id=session_id,
+        num_turns=out["num_turns"],
+        ok=out["ok"],
+        error=out["error"],
+        session_id=out["session_id"],
     )
 
 
@@ -198,6 +293,8 @@ def run_editor_sync(
     resume: str | None = None,
     fork: bool = False,
     role: str = "editor",
+    steer: bool = False,
+    on_progress: Callable[[str], None] | None = None,
 ) -> EditorResult:
     return anyio.run(
         partial(
@@ -212,5 +309,7 @@ def run_editor_sync(
             resume=resume,
             fork=fork,
             role=role,
+            steer=steer,
+            on_progress=on_progress,
         )
     )

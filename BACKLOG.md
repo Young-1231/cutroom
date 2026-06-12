@@ -9,13 +9,21 @@
 
 经 2026-06 完整 deep research（见 docs/agent-paradigms.md）排出的范式吸收优先级：
 
-1. **无标准机制、需自研**（调研未找到可抄的工业标准）：中途 steering/打断、verification/
-   self-critique 回合、observability/trace（trail.jsonl 已是雏形）。是真实缺口但要自己设计。
+1. **无标准机制、需自研（剩余）**：verification/self-critique 回合、observability/trace
+   升级（trail.jsonl 已是雏形）。（steering 已落，见已完成）
 3. **M2 评测故事（剩余）**：AgenticVBench Repurpose 子集跑分脚本接入 CI。
 4. **Checkpoint 升级**（等 resume/fork 用例沉淀）：Cline 三粒度 restore（EDL / 会话 / 两者），
    checkpoint 与 session 记录已互通 id，机制就绪。
 
 ## 已完成
+
+- 中途 steering + 工具调用进度行（2026-06-12，自研机制 #1）：156 离线测试（+6）+ 真实
+  e2e。自研设计（调研确认无工业标准可抄）：`--steer` 下 stdin 每行 → client.interrupt()
+  → 驱动循环把该行包成 [USER STEERING] 重新 query 注入同一会话；prompt 字符串是唯一
+  通道，receipts 状态原样延续；只有最后一轮决定 ok/error（被打断≠失败）。runner 重构出
+  可测的 _drive_session（注入 client，FakeClient 离线全覆盖）。配套：每次工具调用打一行
+  紧凑进度（→ view_frames 42s,46.5s），有得看才有得 steer。真实验证：任务要 3 刀 30s
+  teaser，管道注入"只要 1 刀 Bert 歌 ≤15s"→ 最终 EDL 恰 1 刀 14.4s Bert 歌。
 
 - 文件 allowlist sandbox（2026-06-12，范式吸收 #5b，Bundle 收官）：150 离线测试（+6）
   + 对抗性真实 e2e。结论：SDK 的 OS 级 sandbox 只罩 Bash（cutroom 已三层拒绝 Bash），
